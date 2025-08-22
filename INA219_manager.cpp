@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
  
-#include "ina219_manager.h"
+#include "INA219_manager.h"
 
 // =============================================================================
 // CONSTRUCTOR AND INITIALIZATION
