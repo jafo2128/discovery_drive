@@ -26,7 +26,7 @@
 #include <Preferences.h>
 
 // Custom includes
-#include "ina219_manager.h"
+#include "INA219_manager.h"
 #include "logger.h"
 
 // Forward declaration to avoid circular dependency
