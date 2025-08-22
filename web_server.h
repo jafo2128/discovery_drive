@@ -31,7 +31,7 @@
 
 // Custom includes
 #include "motor_controller.h"
-#include "ina219_manager.h"
+#include "INA219_manager.h"
 #include "stellarium_poller.h"
 #include "serial_manager.h"
 #include "wifi_manager.h"

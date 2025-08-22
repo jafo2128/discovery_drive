@@ -20,7 +20,7 @@
 #include "wifi_manager.h"
 #include "motor_controller.h"
 #include "web_server.h"
-#include "ina219_manager.h"
+#include "INA219_manager.h"
 #include "stellarium_poller.h"
 #include "weather_poller.h"
 #include "serial_manager.h"
