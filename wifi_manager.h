@@ -67,11 +67,11 @@ private:
     String wifi_password;
     
     // Access Point configuration
-    const char* _ap_ssid = "discoverydish_HOTSPOT";
-    const char* _ap_password = "discoverydish";
+    const char* _ap_ssid = "discoverydrive_HOTSPOT";
+    const char* _ap_password = "discoverydrive";
     
     // Network configuration
-    String _hostname = "discoverydish";
+    String _hostname = "discoverydrive";
     
     // ESP-IDF network interface
     esp_netif_t* sta_netif = NULL;
