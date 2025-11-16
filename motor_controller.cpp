@@ -1129,10 +1129,8 @@ float MotorSensorController::ReadRawAngle(int i2c_addr) {
         return -999;
     }
 
-    resetI2CErrorCounter(i2c_addr);
-
     // Timeout check
-    unsigned long startTime = millis();
+    /*unsigned long startTime = millis();
     while (Wire.available() < 2) {
         if (millis() - startTime > timeout) {
             _logger.error("Timeout waiting for bytes from hall sensor");
@@ -1143,7 +1141,19 @@ float MotorSensorController::ReadRawAngle(int i2c_addr) {
     // Read and process data
     Wire.readBytes(buffer, 2);
     word rawAngleValue = ((uint16_t)buffer[0] << 8) | buffer[1];
-    return rawAngleValue * 0.087890625; // Convert to degrees
+    return rawAngleValue * 0.087890625; // Convert to degrees*/
+
+    // Wire.setTimeOut() already handles timeout - just check if data is available
+    if (Wire.available() >= 2) {
+        Wire.readBytes(buffer, 2);
+        word rawAngleValue = ((uint16_t)buffer[0] << 8) | buffer[1];
+        resetI2CErrorCounter(i2c_addr);
+        return rawAngleValue * 0.087890625;
+    } else {
+        _logger.error("I2C bytes not available from sensor");
+        updateI2CErrorCounter(i2c_addr);
+        return -999;
+    }
 }
 
 int MotorSensorController::checkMagnetPresence(int i2c_addr) {
