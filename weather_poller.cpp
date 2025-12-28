@@ -549,45 +549,15 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
     int forecastCount = 0;
     
     int currentHour = getCurrentHourFromTime(currentTimeStr);
-    bool useTimeFiltering = true;
 
-    // If we couldn't parse current hour, disable time filtering
-    if (currentHour < 0 || currentHour > 23) {
-        _logger.warn("Could not determine current hour from: " + currentTimeStr + 
-                    ", using first available forecast hours");
-        useTimeFiltering = false;
-    } else {
-        _logger.debug("Current time: " + currentTimeStr + ", current hour: " + 
-                     String(currentHour) + ", looking for hours > " + String(currentHour));
-    }
+    // If we couldn't parse current hour, or it's late in the day (hour >= 21),
+    // start with tomorrow's forecast to ensure we get enough future hours
+    bool startWithTomorrow = (currentHour < 0 || currentHour > 23 || currentHour >= 21);
     
-    // Parse today's forecast hours
-    for (size_t i = 0; i < hours.size() && forecastCount < 3; i++) {
-        JsonObject hour = hours[i];
+    if (startWithTomorrow && forecastDays.size() > 1) {
+        _logger.debug("Late hour (" + String(currentHour) + ") or invalid time - prioritizing tomorrow's forecast");
         
-        const char* hourTimeStr = hour["time"];
-        if (hourTimeStr == nullptr) continue;
-        
-        String hourTime = String(hourTimeStr);
-        int hourValue = getHourFromTimeString(hourTime);
-        
-        bool includeThisHour = !useTimeFiltering || (hourValue > currentHour);
-        
-        if (includeThisHour) {
-            localForecast[forecastCount].time = hourTime;
-            localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
-            localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
-            localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
-            
-            _logger.debug("Forecast " + String(forecastCount) + ": " + hourTime + 
-                         " - Wind: " + String(localForecast[forecastCount].windSpeed, 1) + " km/h");
-            
-            forecastCount++;
-        }
-    }
-    
-    // If we couldn't find 3 future hours, try tomorrow's forecast
-    if (forecastCount < 3 && forecastDays.size() > 1) {
+        // Get tomorrow's hours first
         JsonObject tomorrow = forecastDays[1];
         if (tomorrow.containsKey("hour")) {
             JsonArray tomorrowHours = tomorrow["hour"];
@@ -598,19 +568,71 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
                 const char* hourTimeStr = hour["time"];
                 if (hourTimeStr == nullptr) continue;
                 
-                String hourTime = String(hourTimeStr);
+                localForecast[forecastCount].time = String(hourTimeStr);
+                localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
+                localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
+                localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
                 
+                forecastCount++;
+            }
+        }
+    } else {
+        _logger.debug("Current hour: " + String(currentHour) + ", filtering for hours > " + String(currentHour));
+        
+        // Parse today's forecast hours - only include future hours
+        for (size_t i = 0; i < hours.size() && forecastCount < 3; i++) {
+            JsonObject hour = hours[i];
+            
+            const char* hourTimeStr = hour["time"];
+            if (hourTimeStr == nullptr) continue;
+            
+            String hourTime = String(hourTimeStr);
+            int hourValue = getHourFromTimeString(hourTime);
+            
+            // Include hours after current hour
+            if (hourValue > currentHour) {
                 localForecast[forecastCount].time = hourTime;
                 localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
                 localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
                 localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
                 
-                _logger.debug("Tomorrow forecast " + String(forecastCount) + ": " + hourTime + 
+                _logger.debug("Forecast " + String(forecastCount) + ": " + hourTime + 
                              " - Wind: " + String(localForecast[forecastCount].windSpeed, 1) + " km/h");
                 
                 forecastCount++;
             }
         }
+        
+        // If we still need more hours, get them from tomorrow
+        if (forecastCount < 3 && forecastDays.size() > 1) {
+            JsonObject tomorrow = forecastDays[1];
+            if (tomorrow.containsKey("hour")) {
+                JsonArray tomorrowHours = tomorrow["hour"];
+                
+                for (size_t i = 0; i < tomorrowHours.size() && forecastCount < 3; i++) {
+                    JsonObject hour = tomorrowHours[i];
+                    
+                    const char* hourTimeStr = hour["time"];
+                    if (hourTimeStr == nullptr) continue;
+                    
+                    localForecast[forecastCount].time = String(hourTimeStr);
+                    localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
+                    localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
+                    localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
+                    
+                    _logger.debug("Tomorrow forecast " + String(forecastCount) + ": " + 
+                                 localForecast[forecastCount].time + " - Wind: " + 
+                                 String(localForecast[forecastCount].windSpeed, 1) + " km/h");
+                    
+                    forecastCount++;
+                }
+            }
+        }
+    }
+    
+    // Warn if we couldn't get enough forecast entries
+    if (forecastCount < 3) {
+        _logger.warn("Only got " + String(forecastCount) + " forecast entries (expected 3)");
     }
     
     // Quick atomic update of shared data
@@ -622,7 +644,6 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
                 _weatherData.forecastWindDirection[i] = localForecast[i].windDirection;
                 _weatherData.forecastWindGust[i] = localForecast[i].windGust;
             } else {
-                // Clear unused slots
                 _weatherData.forecastTimes[i] = "";
                 _weatherData.forecastWindSpeed[i] = 0.0f;
                 _weatherData.forecastWindDirection[i] = 0.0f;

@@ -1429,7 +1429,7 @@ float MotorSensorController::getAzOffset() {
 
 void MotorSensorController::setAzOffset(float offset) {
     // Validate offset range (±180 degrees should be sufficient)
-    if (offset < -180.0 || offset > 180.0) {
+    if (isnan(offset) || offset < -180.0 || offset > 180.0) {
         _logger.warn("AZ offset out of range: " + String(offset, 3) + "° (range: ±180°)");
         return;
     }

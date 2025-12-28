@@ -178,8 +178,8 @@ void WebServerManager::setupMotorControlRoutes() {
         if (server->hasArg("new_setpoint_el")) {
             String update_var = server->arg("new_setpoint_el");
             if (update_var.length() != 0) {
-                float el = update_var.toFloat();
-                if (el >= 0 && el <= 90) {
+                float el;
+                if (parseFloat(update_var, el) >= 0 && el <= 90) {
                     msc.setSetPointEl(el);
                 }
             }
@@ -187,8 +187,8 @@ void WebServerManager::setupMotorControlRoutes() {
 
         if (server->hasArg("new_setpoint_az")) {
             String update_var = server->arg("new_setpoint_az");
-            if (update_var.length() != 0) {
-                float az = update_var.toFloat();
+            float az;
+            if (parseFloat(update_var, az)) {
                 az = fmod(az, 360.0);
                 if (az < 0) {
                     az += 360.0;
@@ -610,7 +610,7 @@ void WebServerManager::setupConfigurationRoutes() {
             elOffsetStr.trim();
             if (elOffsetStr.length() > 0) {
                 float elOffset = elOffsetStr.toFloat();
-                if (elOffset >= -45.0 && elOffset <= 45.0) {
+                if (elOffset >= -5.0 && elOffset <= 5.0) {
                     msc.setElOffset(elOffset);
                     updated = true;
                     _logger.info("EL angle offset set to: " + String(elOffset, 3) + "° via web interface");
@@ -645,7 +645,7 @@ void WebServerManager::setupAPIRoutes() {
     });
 
     server->on("/variable", HTTP_GET, [this]() {
-        DynamicJsonDocument doc(8192);
+        static DynamicJsonDocument doc(8192);
         doc.clear();
 
         // Motor and control data
@@ -773,7 +773,7 @@ void WebServerManager::setupAPIRoutes() {
         WindStowState windStowState = msc.getWindStowState();
         doc["windStowActive"] = String(windStowState.active ? "YES" : "NO");
         doc["windStowReason"] = windStowState.reason;
-        doc["stowDirection"] = String(windStowState.direction, 1);
+        doc["stowDirection"] = String(windSafetyData.currentStowDirection, 1);
         doc["windTrackingActive"] = String(msc.isWindTrackingActive() ? "YES" : "NO");
         doc["windTrackingStatus"] = msc.getWindTrackingStatus();
         doc["windSafetyEnabled"] = String(weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF");
@@ -781,8 +781,6 @@ void WebServerManager::setupAPIRoutes() {
         doc["windSpeedThreshold"] = String(weatherPoller.getWindSpeedThreshold(), 1);
         doc["windGustThreshold"] = String(weatherPoller.getWindGustThreshold(), 1);
         doc["emergencyStowActive"] = String(windSafetyData.emergencyStowActive ? "YES" : "NO");
-        doc["stowDirection"] = String(windSafetyData.currentStowDirection, 1);
-
 
         String json;
         serializeJson(doc, json);
@@ -879,110 +877,177 @@ void WebServerManager::handleOTAUpload() {
 void WebServerManager::handleFileUpload() {
     HTTPUpload& upload = server->upload();
     
-    static String uploadFilename = "";
-    static File uploadFile;
-    static bool uploadSuccess = false;
-    static size_t totalBytesWritten = 0;
-    static bool mutexHeld = false;  // FIXED: Track mutex state
+    // Group all state into a struct for cleaner management
+    struct UploadState {
+        String filename;
+        File file;
+        bool success;
+        size_t bytesWritten;
+        bool mutexHeld;
+        unsigned long startTime;
+        
+        void reset() {
+            if (file) {
+                file.close();
+            }
+            filename = "";
+            file = File();
+            success = false;
+            bytesWritten = 0;
+            mutexHeld = false;
+            startTime = 0;
+        }
+        
+        bool isStale(unsigned long timeoutMs = 30000) {
+            // Consider upload stale if no activity for 30 seconds
+            return (startTime > 0 && (millis() - startTime) > timeoutMs);
+        }
+    };
+    
+    static UploadState state;
     static const size_t MAX_UPLOAD_SIZE = 3 * 1024 * 1024;
+    static const unsigned long UPLOAD_TIMEOUT_MS = 30000;
 
-    _logger.debug("Upload status: " + String(upload.status) + ", filename: " + upload.filename + ", size: " + String(upload.currentSize));
+    // Detect and clean up stale uploads before processing
+    if (state.startTime > 0 && state.isStale(UPLOAD_TIMEOUT_MS)) {
+        _logger.warn("Cleaning up stale upload: " + state.filename);
+        if (state.file) {
+            state.file.close();
+        }
+        if (state.mutexHeld && _fileMutex != NULL) {
+            xSemaphoreGive(_fileMutex);
+        }
+        state.reset();
+    }
 
     if (upload.status == UPLOAD_FILE_START) {
         _logger.info("Starting upload: " + String(upload.filename.c_str()));
         
-        uploadFilename = upload.filename;
-        uploadSuccess = false;
-        totalBytesWritten = 0;
-        mutexHeld = false;  // FIXED: Reset mutex state
+        // Clean up any previous incomplete upload
+        if (state.file) {
+            _logger.warn("Cleaning up previous incomplete upload");
+            state.file.close();
+        }
+        if (state.mutexHeld && _fileMutex != NULL) {
+            xSemaphoreGive(_fileMutex);
+        }
+        
+        // Reset all state for new upload
+        state.reset();
+        state.filename = upload.filename;
+        state.startTime = millis();
         
         if (!isValidUpdateFile(upload.filename)) {
-            _logger.error("Invalid file type");
+            _logger.error("Invalid file type: " + upload.filename);
             return;
         }
         
         String filepath = "/" + upload.filename;
         
-        if (xSemaphoreTake(_fileMutex, portMAX_DELAY) == pdTRUE) {
-            mutexHeld = true;  // FIXED: Track that we hold the mutex
-            uploadFile = LittleFS.open(filepath, "w");
-            if (uploadFile) {
+        if (_fileMutex != NULL && xSemaphoreTake(_fileMutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            state.mutexHeld = true;
+            state.file = LittleFS.open(filepath, "w");
+            
+            if (state.file) {
                 _logger.debug("File opened for writing: " + filepath);
-                uploadSuccess = true;
+                state.success = true;
             } else {
                 _logger.error("Cannot open file: " + filepath);
                 xSemaphoreGive(_fileMutex);
-                mutexHeld = false;  // FIXED: Track mutex release
+                state.mutexHeld = false;
             }
         } else {
-            _logger.error("Cannot take file mutex");
+            _logger.error("Cannot acquire file mutex (timeout)");
         }
         
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-        _logger.debug("Writing " + String(upload.currentSize) + " bytes (total so far: " + String(totalBytesWritten + upload.currentSize) + " bytes)");
+        // Update activity timestamp
+        state.startTime = millis();
+        
+        _logger.debug("Writing " + String(upload.currentSize) + " bytes (total: " + 
+                     String(state.bytesWritten + upload.currentSize) + ")");
 
         // Check file size limit
-        if (upload.currentSize > MAX_UPLOAD_SIZE - totalBytesWritten) {
-            _logger.error("File too large - " + String(totalBytesWritten + upload.currentSize) + " bytes exceeds " + String(MAX_UPLOAD_SIZE) + " byte limit");
-            uploadSuccess = false;
-            if (uploadFile) {
-                uploadFile.close();
-                uploadFile = File();
+        if (state.bytesWritten + upload.currentSize > MAX_UPLOAD_SIZE) {
+            _logger.error("File too large - exceeds " + String(MAX_UPLOAD_SIZE) + " byte limit");
+            state.success = false;
+            
+            // Clean up immediately
+            if (state.file) {
+                state.file.close();
+                state.file = File();
+                LittleFS.remove("/" + state.filename);  // Delete partial file
             }
-            // FIXED: Release mutex on early abort
-            if (mutexHeld) {
+            if (state.mutexHeld && _fileMutex != NULL) {
                 xSemaphoreGive(_fileMutex);
-                mutexHeld = false;
+                state.mutexHeld = false;
             }
             return;
         }
         
-        if (uploadFile && uploadSuccess && upload.currentSize > 0) {
-            size_t written = uploadFile.write(upload.buf, upload.currentSize);
+        if (state.file && state.success && upload.currentSize > 0) {
+            size_t written = state.file.write(upload.buf, upload.currentSize);
             if (written != upload.currentSize) {
-                _logger.error("Write failed - expected " + String(upload.currentSize) + ", wrote " + String(written));
-                uploadSuccess = false;
+                _logger.error("Write failed - expected " + String(upload.currentSize) + 
+                             ", wrote " + String(written));
+                state.success = false;
             } else {
-                totalBytesWritten += written;
+                state.bytesWritten += written;
             }
-        } else {
-            _logger.error("File not ready for writing");
-            uploadSuccess = false;
+        } else if (!state.file) {
+            _logger.error("File handle invalid during write");
+            state.success = false;
         }
         
     } else if (upload.status == UPLOAD_FILE_END) {
-        _logger.debug("Upload finished: " + upload.filename + ", total: " + String(upload.totalSize) + " bytes (written: " + String(totalBytesWritten) + " bytes)");
+        _logger.debug("Upload finished: " + state.filename + ", total: " + 
+                     String(upload.totalSize) + " bytes (written: " + 
+                     String(state.bytesWritten) + ")");
 
-        if (uploadFile) {
-            uploadFile.close();
-            _logger.debug("File closed");
+        // Close file first
+        if (state.file) {
+            state.file.close();
+            state.file = File();
         }
         
-        // FIXED: Only release mutex if we actually hold it
-        if (mutexHeld) {
+        // Release mutex
+        if (state.mutexHeld && _fileMutex != NULL) {
             xSemaphoreGive(_fileMutex);
-            mutexHeld = false;
+            state.mutexHeld = false;
         }
         
-        if (uploadSuccess && totalBytesWritten > 0) {
-            _logger.info("File uploaded: " + uploadFilename + " (" + String(totalBytesWritten) + " bytes)");
-            verifyUploadedFile(uploadFilename, totalBytesWritten);
+        // Verify and log result
+        if (state.success && state.bytesWritten > 0) {
+            _logger.info("File uploaded: " + state.filename + " (" + 
+                        String(state.bytesWritten) + " bytes)");
+            verifyUploadedFile(state.filename, state.bytesWritten);
         } else {
-            _logger.error("Upload failed: " + uploadFilename);
+            _logger.error("Upload failed: " + state.filename);
+            // Clean up failed upload file
+            LittleFS.remove("/" + state.filename);
         }
+        
+        // Reset state for next upload
+        state.reset();
         
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
-        _logger.debug("Upload aborted");
-        if (uploadFile) {
-            uploadFile.close();
+        _logger.warn("Upload aborted: " + state.filename);
+        
+        // Close and delete partial file
+        if (state.file) {
+            state.file.close();
+            state.file = File();
+            LittleFS.remove("/" + state.filename);
         }
-        // FIXED: Only release mutex if we actually hold it
-        if (mutexHeld) {
+        
+        // Release mutex
+        if (state.mutexHeld && _fileMutex != NULL) {
             xSemaphoreGive(_fileMutex);
-            mutexHeld = false;
+            state.mutexHeld = false;
         }
-        uploadSuccess = false;
-        totalBytesWritten = 0;
+        
+        // Reset state
+        state.reset();
     }
 }
 
@@ -1117,6 +1182,31 @@ void WebServerManager::sendOTAResponse(const String& message, bool success) {
 // =============================================================================
 // UTILITY METHODS
 // =============================================================================
+
+// Returns true if string represents a valid float and stores result in outValue
+// Safe for situations where text is accidentally input as a number
+bool WebServerManager::parseFloat(const String& str, float& outValue) {
+    if (str.length() == 0) return false;
+    
+    const char* cstr = str.c_str();
+    char* endPtr = nullptr;
+    float value = strtof(cstr, &endPtr);
+    
+    // Check if entire string was consumed (valid number)
+    // and that we actually parsed something
+    if (endPtr == cstr || *endPtr != '\0') {
+        return false;  // Invalid: no conversion or trailing garbage
+    }
+    
+    if (isnan(value) || isinf(value)) {
+        return false;  // Invalid: NaN or infinity
+    }
+    
+    outValue = value;
+    return true;
+}
+
+
 
 String WebServerManager::createRestartResponse(const String& title, const String& message) {
     return "<!DOCTYPE html>\n"
@@ -1383,3 +1473,4 @@ void WebServerManager::setLoginPassword(String loginPassword) {
         xSemaphoreGive(_loginUserMutex);
     }
 }
+

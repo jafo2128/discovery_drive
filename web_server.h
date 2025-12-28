@@ -111,6 +111,7 @@ private:
     String generateOTAUploadHTML();
     String generateUploadJavaScript();
     String generateProgressBarHTML();
+    bool parseFloat(const String& str, float& outValue);
 };
 
 #endif // WEB_SERVER_H

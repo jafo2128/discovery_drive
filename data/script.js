@@ -185,14 +185,35 @@ setInterval(function() {
       document.getElementById("currentWeatherTime").innerHTML = formatWeatherTime(data.currentWeatherTime);
       
       // Forecast data
-      if (data.forecastWindSpeed && data.forecastWindSpeed.length >= 3) {
-        for (var i = 0; i < 3; i++) {
-          document.getElementById("forecastTime" + i).innerHTML = formatWeatherTime(data.forecastTimes[i]);
-          document.getElementById("forecastWindSpeed" + i).innerHTML = data.forecastWindSpeed[i];
-          document.getElementById("forecastWindDirection" + i).innerHTML = formatWindDirection(data.forecastWindDirection[i]);
-          document.getElementById("forecastWindGust" + i).innerHTML = data.forecastWindGust[i];
-        }
-      }
+	  // Forecast data - validate all arrays exist before accessing
+	  var hasForecastData = data.forecastWindSpeed && 
+						    data.forecastWindDirection && 
+						    data.forecastWindGust && 
+						    data.forecastTimes;
+
+	  if (hasForecastData) {
+		  for (var i = 0; i < 3; i++) {
+			  // Safely access each array with bounds checking and fallback
+			  var time = (data.forecastTimes.length > i) ? data.forecastTimes[i] : null;
+			  var speed = (data.forecastWindSpeed.length > i) ? data.forecastWindSpeed[i] : null;
+			  var direction = (data.forecastWindDirection.length > i) ? data.forecastWindDirection[i] : null;
+			  var gust = (data.forecastWindGust.length > i) ? data.forecastWindGust[i] : null;
+			
+			  document.getElementById("forecastTime" + i).innerHTML = formatWeatherTime(time);
+			  document.getElementById("forecastWindSpeed" + i).innerHTML = (speed !== null) ? speed : "N/A";
+			  document.getElementById("forecastWindDirection" + i).innerHTML = formatWindDirection(direction);
+			  document.getElementById("forecastWindGust" + i).innerHTML = (gust !== null) ? gust : "N/A";
+		  }
+	  } else {
+		  // Clear forecast display when data is missing
+		  for (var i = 0; i < 3; i++) {
+			  document.getElementById("forecastTime" + i).innerHTML = "N/A";
+			  document.getElementById("forecastWindSpeed" + i).innerHTML = "N/A";
+			  document.getElementById("forecastWindDirection" + i).innerHTML = "N/A";
+			  document.getElementById("forecastWindGust" + i).innerHTML = "N/A";
+		  }
+	  }
+
       
       // Weather error handling
       var weatherErrorDiv = document.getElementById("weatherErrorDiv");
