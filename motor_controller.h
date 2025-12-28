@@ -33,15 +33,15 @@
 class WeatherPoller;
 
 struct WindStowState {
-    bool active;
-    String reason;
-    float direction;
+    bool active = false;
+    String reason = "None";
+    float direction = 0.0f;
 };
 
 struct WindTrackingState {
-    bool active;
-    String status;
-    float lastDirection;
+    bool active = false;
+    String status = "Inactive";  // Default value
+    float lastDirection = 0.0f;
 };
 
 class MotorSensorController {
@@ -238,8 +238,8 @@ private:
     double _prev_error_el = 0.0;
     int _maxAdjustedSpeed_az = 0;
     int _maxAdjustedSpeed_el = 0;
-    bool _jitterAzMotors = false;
-    bool _jitterElMotors = false;
+    std::atomic<bool> _jitterAzMotors{false};
+    std::atomic<bool> _jitterElMotors{false};
     
     // Angle and positioning state
     float _az_startAngle = 0;

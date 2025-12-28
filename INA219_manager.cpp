@@ -45,6 +45,10 @@ INA219Manager::INA219Manager(Logger& logger)
 void INA219Manager::begin() {
     // Create mutex for thread-safe data access
     powerMutex = xSemaphoreCreateMutex();
+    if (powerMutex == NULL) {
+        _logger.error("Failed to create power mutex");
+        return;
+    }
 
     // Initialize INA219 sensor with error handling
     while (!_ina219.begin()) {
@@ -76,7 +80,7 @@ void INA219Manager::ReadData() {
         
         // Calculate raw values
         float rawLoadVoltage = busvoltage + (shuntvoltage / 1000);
-        float rawCurrent = shuntvoltage / 0.01; // Convert to mA
+        float rawCurrent = shuntvoltage / SHUNT_RESISTANCE_OHMS; // Convert to mA
         
         // Update averaging for both voltage and current
         updateVoltageAverage(rawLoadVoltage);

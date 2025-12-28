@@ -46,6 +46,7 @@ private:
     // Hardware configuration
     static constexpr int _INA219_I2C_ADDRESS = 0x45;
     static constexpr int _AVERAGING_ARRAY_SIZE = 10;
+    static constexpr float SHUNT_RESISTANCE_OHMS = 0.01f;
 
     // Thread synchronization
     SemaphoreHandle_t powerMutex = NULL;

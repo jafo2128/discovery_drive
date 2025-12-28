@@ -774,6 +774,7 @@ void WebServerManager::setupAPIRoutes() {
         doc["windStowActive"] = String(windStowState.active ? "YES" : "NO");
         doc["windStowReason"] = windStowState.reason;
         doc["stowDirection"] = String(windStowState.direction, 1);
+        doc["windTrackingActive"] = String(msc.isWindTrackingActive() ? "YES" : "NO");
         doc["windTrackingStatus"] = msc.getWindTrackingStatus();
         doc["windSafetyEnabled"] = String(weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF");
         doc["windBasedHomeEnabled"] = String(weatherPoller.isWindBasedHomeEnabled() ? "ON" : "OFF");
@@ -921,7 +922,7 @@ void WebServerManager::handleFileUpload() {
         _logger.debug("Writing " + String(upload.currentSize) + " bytes (total so far: " + String(totalBytesWritten + upload.currentSize) + " bytes)");
 
         // Check file size limit
-        if (totalBytesWritten + upload.currentSize > MAX_UPLOAD_SIZE) {
+        if (upload.currentSize > MAX_UPLOAD_SIZE - totalBytesWritten) {
             _logger.error("File too large - " + String(totalBytesWritten + upload.currentSize) + " bytes exceeds " + String(MAX_UPLOAD_SIZE) + " byte limit");
             uploadSuccess = false;
             if (uploadFile) {

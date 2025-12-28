@@ -523,7 +523,7 @@ void MotorSensorController::performWindTracking() {
                  "°, Last: " + String(_lastWindTrackingDirection, 1) + "°");
     
     // Always move to the current optimal wind position (no threshold check)
-    if (optimalDirection != _lastWindTrackingDirection) {
+    if (fabs(optimalDirection - _lastWindTrackingDirection) > 0.1f) {
         float directionChange = abs(optimalDirection - _lastWindTrackingDirection);
         
         String reason = (_lastWindTrackingDirection == -999.0) ? 
