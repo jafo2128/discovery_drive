@@ -32,6 +32,18 @@
 // Forward declaration to avoid circular dependency
 class WeatherPoller;
 
+struct WindStowState {
+    bool active;
+    String reason;
+    float direction;
+};
+
+struct WindTrackingState {
+    bool active;
+    String status;
+    float lastDirection;
+};
+
 class MotorSensorController {
 public:
     // Constructor
@@ -96,13 +108,13 @@ public:
     void playOdeToJoy();
 
     // Wind safety methods
+    WindStowState getWindStowState();
     bool isWindStowActive();
-    String getWindStowReason();
-    float getWindStowDirection();
     void performWindStow();
     bool isMovementBlocked();
 
     // Wind tracking methods
+    WindTrackingState getWindTrackingState();
     bool isWindTrackingActive();
     String getWindTrackingStatus();
 

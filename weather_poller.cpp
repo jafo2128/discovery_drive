@@ -344,6 +344,15 @@ bool WeatherPoller::checkForecastWindConditions() {
 }
 
 void WeatherPoller::setEmergencyStowState(bool active, const String& reason) {
+    // FIXED: Get weather data BEFORE taking _windSafetyMutex to avoid nested locking.
+    // This eliminates potential deadlock if another thread acquires these mutexes
+    // in reverse order (_weatherDataMutex -> _windSafetyMutex).
+    float stowDirection = 0.0;
+    if (active) {
+        WeatherData data = getWeatherData();  // Takes and releases _weatherDataMutex
+        stowDirection = calculateOptimalStowDirection(data.currentWindDirection);
+    }
+    
     if (_windSafetyMutex != NULL && xSemaphoreTake(_windSafetyMutex, portMAX_DELAY) == pdTRUE) {
         bool wasActive = _windSafetyData.emergencyStowActive;
         
@@ -351,13 +360,11 @@ void WeatherPoller::setEmergencyStowState(bool active, const String& reason) {
         _windSafetyData.stowReason = reason;
         
         if (active) {
-            // Calculate optimal stow direction based on current wind
-            WeatherData data = getWeatherData();
-            _windSafetyData.currentStowDirection = calculateOptimalStowDirection(data.currentWindDirection);
+            _windSafetyData.currentStowDirection = stowDirection;
             
             if (!wasActive) {
                 _logger.warn("EMERGENCY WIND STOW ACTIVATED: " + reason + 
-                           " - Stow direction: " + String(_windSafetyData.currentStowDirection, 1) + "°");
+                           " - Stow direction: " + String(stowDirection, 1) + "°");
             }
         } else {
             if (wasActive) {

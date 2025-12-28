@@ -68,6 +68,12 @@ void INA219Manager::ReadData() {
         float shuntvoltage = _ina219.getShuntVoltage_mV();
         float busvoltage = _ina219.getBusVoltage_V();
         
+        // Check for I2C read failures (NaN or unreasonable values)
+        if (isnan(shuntvoltage) || isnan(busvoltage)) {
+            xSemaphoreGive(powerMutex);  // FIXED: Release mutex before returning
+            return;
+        }
+        
         // Calculate raw values
         float rawLoadVoltage = busvoltage + (shuntvoltage / 1000);
         float rawCurrent = shuntvoltage / 0.01; // Convert to mA
@@ -77,9 +83,9 @@ void INA219Manager::ReadData() {
         updateCurrentAverage(rawCurrent);
         
         // Store averaged values
-        _current_mA = _averagedCurrent;         // Use averaged current
-        _loadvoltage = _averagedVoltage;        // Use averaged voltage
-        _power = _loadvoltage * (_current_mA / 1000);  // Power in W using both averaged values
+        _current_mA = _averagedCurrent;
+        _loadvoltage = _averagedVoltage;
+        _power = _loadvoltage * (_current_mA / 1000);
         
         xSemaphoreGive(powerMutex);
     }

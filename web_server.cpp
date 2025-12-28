@@ -770,9 +770,10 @@ void WebServerManager::setupAPIRoutes() {
 
         // Wind safety data (add to the existing JSON document in /variable route)
         auto windSafetyData = weatherPoller.getWindSafetyData();
-        doc["windStowActive"] = String(msc.isWindStowActive() ? "YES" : "NO");
-        doc["windStowReason"] = msc.getWindStowReason();
-        doc["windTrackingActive"] = String(msc.isWindTrackingActive() ? "YES" : "NO");
+        WindStowState windStowState = msc.getWindStowState();
+        doc["windStowActive"] = String(windStowState.active ? "YES" : "NO");
+        doc["windStowReason"] = windStowState.reason;
+        doc["stowDirection"] = String(windStowState.direction, 1);
         doc["windTrackingStatus"] = msc.getWindTrackingStatus();
         doc["windSafetyEnabled"] = String(weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF");
         doc["windBasedHomeEnabled"] = String(weatherPoller.isWindBasedHomeEnabled() ? "ON" : "OFF");
@@ -881,7 +882,8 @@ void WebServerManager::handleFileUpload() {
     static File uploadFile;
     static bool uploadSuccess = false;
     static size_t totalBytesWritten = 0;
-    static const size_t MAX_UPLOAD_SIZE = 3 * 1024 * 1024; // 3MB limit
+    static bool mutexHeld = false;  // FIXED: Track mutex state
+    static const size_t MAX_UPLOAD_SIZE = 3 * 1024 * 1024;
 
     _logger.debug("Upload status: " + String(upload.status) + ", filename: " + upload.filename + ", size: " + String(upload.currentSize));
 
@@ -891,6 +893,7 @@ void WebServerManager::handleFileUpload() {
         uploadFilename = upload.filename;
         uploadSuccess = false;
         totalBytesWritten = 0;
+        mutexHeld = false;  // FIXED: Reset mutex state
         
         if (!isValidUpdateFile(upload.filename)) {
             _logger.error("Invalid file type");
@@ -900,6 +903,7 @@ void WebServerManager::handleFileUpload() {
         String filepath = "/" + upload.filename;
         
         if (xSemaphoreTake(_fileMutex, portMAX_DELAY) == pdTRUE) {
+            mutexHeld = true;  // FIXED: Track that we hold the mutex
             uploadFile = LittleFS.open(filepath, "w");
             if (uploadFile) {
                 _logger.debug("File opened for writing: " + filepath);
@@ -907,6 +911,7 @@ void WebServerManager::handleFileUpload() {
             } else {
                 _logger.error("Cannot open file: " + filepath);
                 xSemaphoreGive(_fileMutex);
+                mutexHeld = false;  // FIXED: Track mutex release
             }
         } else {
             _logger.error("Cannot take file mutex");
@@ -922,6 +927,11 @@ void WebServerManager::handleFileUpload() {
             if (uploadFile) {
                 uploadFile.close();
                 uploadFile = File();
+            }
+            // FIXED: Release mutex on early abort
+            if (mutexHeld) {
+                xSemaphoreGive(_fileMutex);
+                mutexHeld = false;
             }
             return;
         }
@@ -947,7 +957,11 @@ void WebServerManager::handleFileUpload() {
             _logger.debug("File closed");
         }
         
-        xSemaphoreGive(_fileMutex);
+        // FIXED: Only release mutex if we actually hold it
+        if (mutexHeld) {
+            xSemaphoreGive(_fileMutex);
+            mutexHeld = false;
+        }
         
         if (uploadSuccess && totalBytesWritten > 0) {
             _logger.info("File uploaded: " + uploadFilename + " (" + String(totalBytesWritten) + " bytes)");
@@ -961,7 +975,11 @@ void WebServerManager::handleFileUpload() {
         if (uploadFile) {
             uploadFile.close();
         }
-        xSemaphoreGive(_fileMutex);
+        // FIXED: Only release mutex if we actually hold it
+        if (mutexHeld) {
+            xSemaphoreGive(_fileMutex);
+            mutexHeld = false;
+        }
         uploadSuccess = false;
         totalBytesWritten = 0;
     }

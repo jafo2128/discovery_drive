@@ -372,23 +372,20 @@ bool MotorSensorController::isWindStowActive() {
     return _windStowActive.load();
 }
 
-String MotorSensorController::getWindStowReason() {
-    String reason = "";
+// NEW: Returns all wind stow data atomically under single mutex lock
+WindStowState MotorSensorController::getWindStowState() {
+    WindStowState state = {false, "", 0.0};
+    
     if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
-        reason = _windStowReason;
+        state.active = _windStowActive.load();
+        state.reason = _windStowReason;
+        state.direction = _windStowDirection;
         xSemaphoreGive(_windStowMutex);
     }
-    return reason;
+    
+    return state;
 }
 
-float MotorSensorController::getWindStowDirection() {
-    float direction = 0.0;
-    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
-        direction = _windStowDirection;
-        xSemaphoreGive(_windStowMutex);
-    }
-    return direction;
-}
 
 // =============================================================================
 // WIND TRACKING METHODS
@@ -426,6 +423,26 @@ void MotorSensorController::updateWindTrackingStatus() {
     }
 }
 
+WindTrackingState MotorSensorController::getWindTrackingState() {
+    WindTrackingState state;
+    
+    // These are all atomics or only modified from one thread, but group for consistency
+    state.active = _windTrackingActive.load();
+    state.lastDirection = _lastWindTrackingDirection;
+    
+    // Build status string
+    if (!state.active) {
+        state.status = "Inactive";
+    } else if (_weatherPoller == nullptr || !_weatherPoller->isDataValid()) {
+        state.status = "Active (No weather data)";
+    } else {
+        WeatherData weatherData = _weatherPoller->getWeatherData();
+        state.status = "Active - Wind: " + String(weatherData.currentWindDirection, 1) + 
+                      "°, Target: " + String(state.lastDirection, 1) + "°";
+    }
+    
+    return state;
+}
 
 bool MotorSensorController::shouldActivateWindTracking() {
     if (_weatherPoller == nullptr) {
@@ -535,17 +552,7 @@ bool MotorSensorController::isWindTrackingActive() {
 }
 
 String MotorSensorController::getWindTrackingStatus() {
-    if (!_windTrackingActive) {
-        return "Inactive";
-    }
-    
-    if (_weatherPoller == nullptr || !_weatherPoller->isDataValid()) {
-        return "Active (No weather data)";
-    }
-    
-    WeatherData weatherData = _weatherPoller->getWeatherData();
-    return "Active - Wind: " + String(weatherData.currentWindDirection, 1) + 
-           "°, Target: " + String(_lastWindTrackingDirection, 1) + "°";
+    return getWindTrackingState().status;
 }
 
 // =============================================================================
