@@ -50,12 +50,24 @@ void INA219Manager::begin() {
         return;
     }
 
-    // Initialize INA219 sensor with error handling
+    // Initialize INA219 sensor with retry limit
+    const int MAX_INIT_RETRIES = 10;
+    int retryCount = 0;
+    
     while (!_ina219.begin()) {
-        _logger.error("Failed to find INA219 chip");
-        delay(1000); // Wait before retrying
+        retryCount++;
+        _logger.error("Failed to find INA219 chip (attempt " + String(retryCount) + "/" + String(MAX_INIT_RETRIES) + ")");
+        
+        if (retryCount >= MAX_INIT_RETRIES) {
+            _logger.error("INA219 sensor initialization failed after " + String(MAX_INIT_RETRIES) + " attempts - power monitoring disabled");
+            _sensorAvailable = false;
+            return;  // Allow system to continue without power sensor
+        }
+        
+        delay(1000);
     }
 
+    _sensorAvailable = true;
     _logger.info("INA219 sensor initialized successfully");
     
     // Perform initial data reading
@@ -67,7 +79,7 @@ void INA219Manager::begin() {
 // =============================================================================
 
 void INA219Manager::ReadData() {
-    if (powerMutex == NULL) {
+    if (powerMutex == NULL || !_sensorAvailable) {
         return;  // Sensor not initialized
     }
 

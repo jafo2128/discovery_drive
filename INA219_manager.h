@@ -51,6 +51,8 @@ private:
     // Thread synchronization
     SemaphoreHandle_t powerMutex = NULL;
 
+    std::atomic<bool> _sensorAvailable{false};
+
     // Sensor data (thread-safe)
     float _current_mA = 0;
     float _loadvoltage = 0;
