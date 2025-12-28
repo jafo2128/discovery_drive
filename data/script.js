@@ -460,7 +460,9 @@ function drawPositions(azimuth, elevation, setpoint_az, setpoint_el) {
 // Function to draw wind direction triangle
 function drawWindDirection(windDirection, weatherDataValid) {
   // Don't draw if no valid wind data
-  if (!weatherDataValid || !windDirection || windDirection === "N/A" || isNaN(windDirection)) {
+  // Check for invalid data, but allow 0 as valid direction
+  if (!weatherDataValid || windDirection === null || windDirection === undefined || 
+      windDirection === "N/A" || windDirection === "" || isNaN(parseFloat(windDirection))) {
     return;
   }
   

@@ -121,7 +121,7 @@ void setup() {
     ,  NULL
     ,  1  // Priority
     ,  NULL
-    ,  1); // Run on core 0 (not timing critical)
+    ,  1); // Run on core 1 (not timing critical)
 
   xTaskCreatePinnedToCore(
     ReadWiFi
@@ -139,7 +139,7 @@ void setup() {
     ,  NULL // Task parameter which can modify the task behavior. This must be passed as pointer to void.
     ,  1  // Priority
     ,  NULL // Task handle is not used here - simply pass NULL
-    ,  1); // Run on core 0 (since polling is not timing critical)
+    ,  1); // Run on core 1
 
   xTaskCreatePinnedToCore(
     PollWeather
@@ -148,7 +148,7 @@ void setup() {
     ,  NULL // Task parameter which can modify the task behavior. This must be passed as pointer to void.
     ,  1  // Priority
     ,  NULL // Task handle is not used here - simply pass NULL
-    ,  1); // Run on core 0 (network polling is not timing critical)
+    ,  1); // Run on core 1
 
   xTaskCreatePinnedToCore(
     ProcessSerial
@@ -166,7 +166,7 @@ void setup() {
     ,  NULL
     ,  2  // Max priority to safety monitor thread
     ,  NULL
-    ,  0); // Run on core 1
+    ,  0); // Run on core 0
 
   xTaskCreatePinnedToCore(
     ControlMotors

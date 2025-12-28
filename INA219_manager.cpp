@@ -171,8 +171,8 @@ float INA219Manager::calculateCurrentAverage() {
 
 float INA219Manager::getCurrent() {
     float result = 0;
-    if (xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
-        result = _current_mA;  // This is now the averaged current
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+        result = _current_mA;
         xSemaphoreGive(powerMutex);
     }
     return result;
@@ -180,8 +180,8 @@ float INA219Manager::getCurrent() {
 
 float INA219Manager::getLoadVoltage() {
     float result = 0;
-    if (xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
-        result = _loadvoltage;  // This is the averaged voltage
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+        result = _loadvoltage;
         xSemaphoreGive(powerMutex);
     }
     return result;
@@ -189,8 +189,8 @@ float INA219Manager::getLoadVoltage() {
 
 float INA219Manager::getPower() {
     float result = 0;
-    if (xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
-        result = _power;  // This is calculated using both averaged voltage and current
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+        result = _power;
         xSemaphoreGive(powerMutex);
     }
     return result;

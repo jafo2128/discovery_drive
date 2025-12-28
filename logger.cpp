@@ -98,14 +98,12 @@ bool Logger::getSerialOutputDisabled() {
 // =============================================================================
 
 String Logger::getNewLogMessages() {
-    String result = "";
-    
+    String result;
     if (_logMessagesMutex != NULL && xSemaphoreTake(_logMessagesMutex, portMAX_DELAY) == pdTRUE) {
-        result = _newMessages;
-        _newMessages = "";  // Clear buffer after reading
+        result = std::move(_newMessages);  // Move instead of copy
+        _newMessages = "";  // Ensure it's in a valid empty state
         xSemaphoreGive(_logMessagesMutex);
     }
-    
     return result;
 }
 

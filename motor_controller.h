@@ -269,7 +269,7 @@ private:
     uint8_t _consecutivei2cErrors_el = 0;
 
     // Calibration state
-    int _calRunTime = 0;
+    std::atomic<int> _calRunTime{0};
     String _calAxis = "";
     int _calState = 0;
     unsigned long _calMoveStartTime = 0;
@@ -302,6 +302,7 @@ private:
     SemaphoreHandle_t _el_startAngleMutex = NULL;
     SemaphoreHandle_t _windStowMutex = NULL;
     SemaphoreHandle_t _offsetMutex = NULL;  // NEW: For thread-safe offset access
+    SemaphoreHandle_t _calMutex = NULL;
 
     // Motor control methods
     void actuate_motor_az(int min_speed);

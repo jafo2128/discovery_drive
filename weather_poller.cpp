@@ -541,7 +541,13 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
     if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
         int forecastCount = 0;
         int currentHour = getCurrentHourFromTime(currentTimeStr);
-        
+
+        // If we couldn't parse current hour, default to showing next available hours
+        if (currentHour < 0 || currentHour > 23) {
+            _logger.warn("Could not determine current hour from: " + currentTimeStr + ", using hour 0");
+            currentHour = -1;  // This will include all future hours starting from hour 0
+        }
+
         _logger.debug("Current time: " + currentTimeStr + ", current hour: " + String(currentHour) + ", looking for hours > " + String(currentHour));
         
         // Find the next available hours starting from current hour + 1
@@ -804,7 +810,7 @@ String WeatherPoller::buildApiUrl() {
         return "";
     }
     
-    String url = "http://api.weatherapi.com/v1/forecast.json";
+    String url = "https://api.weatherapi.com/v1/forecast.json";
     url += "?key=" + apiKey;
     url += "&q=" + String(_latitude.load(), 6) + "," + String(_longitude.load(), 6);
     url += "&days=2";

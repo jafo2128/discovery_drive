@@ -34,6 +34,7 @@ MotorSensorController::MotorSensorController(Preferences& prefs, INA219Manager& 
     _el_startAngleMutex = xSemaphoreCreateMutex();
     _windStowMutex = xSemaphoreCreateMutex();
     _offsetMutex = xSemaphoreCreateMutex();
+    _calMutex = xSemaphoreCreateMutex();
     
     // Initialize wind tracking
     _lastManualSetpointTime = millis();
@@ -1499,9 +1500,12 @@ void MotorSensorController::calMoveMotor(const String& runTimeStr, const String&
         Serial.println("Calibration mode OFF; ignoring calMove request.");
         return;
     }
-
-    _calRunTime = runTimeStr.toInt();
-    _calAxis = axis;
+    
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+        _calRunTime = runTimeStr.toInt();
+        _calAxis = axis;
+        xSemaphoreGive(_calMutex);
+    }
 }
 
 void MotorSensorController::calibrate_elevation() {
@@ -1513,8 +1517,17 @@ void MotorSensorController::calibrate_elevation() {
 }
 
 void MotorSensorController::handleCalibrationMode() {
+    int calRunTime = 0;
+    String calAxis = "";
+    
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+        calRunTime = _calRunTime;
+        calAxis = _calAxis;
+        xSemaphoreGive(_calMutex);
+    }
+    
     if (_calState == 0) {
-        if (abs(_calRunTime) > 0 && _calAxis != "") {
+        if (abs(calRunTime) > 0 && calAxis != "") {
             _calMoveStartTime = millis();
             _calState = 1;
         } else {
@@ -1526,23 +1539,33 @@ void MotorSensorController::handleCalibrationMode() {
     } else if (_calState == 1) {
         int directionPin, pwmPin;
         
-        if (_calAxis.equalsIgnoreCase("AZ")) {
+        if (calAxis.equalsIgnoreCase("AZ")) {
             directionPin = _ccw_pin_az;
             pwmPin = _pwm_pin_az;
-        } else if (_calAxis.equalsIgnoreCase("EL")) {
+        } else if (calAxis.equalsIgnoreCase("EL")) {
             directionPin = _ccw_pin_el;
             pwmPin = _pwm_pin_el;
+        } else {
+            _logger.error("Invalid calibration axis: " + _calAxis);
+            _calRunTime = 0;
+            _calAxis = "";
+            _calState = 0;
+            return;
         }
         
-        digitalWrite(directionPin, _calRunTime > 0);
+        digitalWrite(directionPin, calRunTime > 0);
         analogWrite(pwmPin, 0);
 
         unsigned long elapsedTime = millis() - _calMoveStartTime;
-        if (elapsedTime > abs(_calRunTime)) {
+        if (elapsedTime > abs(calRunTime)) {
             analogWrite(_pwm_pin_az, 255);
             analogWrite(_pwm_pin_el, 255);
-            _calRunTime = 0;
-            _calAxis = "";
+            
+            if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+                _calRunTime = 0;
+                _calAxis = "";
+                xSemaphoreGive(_calMutex);
+            }
             _calState = 0;
         }
     }
