@@ -221,7 +221,7 @@ void MotorSensorController::runSafetyLoop() {
 
         if (outOfBoundsFault) {
             global_fault = true;
-            errorText += "EL went out of bounds. Value: " + String(getCorrectedAngleEl()) + "\n";
+            errorText += "EL went out of bounds. Value: " + String(currentEl) + "\n";
             hasNewErrors = true;
         }
     }
@@ -429,18 +429,17 @@ void MotorSensorController::updateWindTrackingStatus() {
 
 WindTrackingState MotorSensorController::getWindTrackingState() {
     WindTrackingState state;
-    
-    // These are all atomics or only modified from one thread, but group for consistency
     state.active = _windTrackingActive.load();
     state.lastDirection = _lastWindTrackingDirection;
     
-    // Build status string
+    WeatherPoller* wp = _weatherPoller;  // Local copy
+    
     if (!state.active) {
         state.status = "Inactive";
-    } else if (_weatherPoller == nullptr || !_weatherPoller->isDataValid()) {
+    } else if (wp == nullptr || !wp->isDataValid()) {
         state.status = "Active (No weather data)";
     } else {
-        WeatherData weatherData = _weatherPoller->getWeatherData();
+        WeatherData weatherData = wp->getWeatherData();
         state.status = "Active - Wind: " + String(weatherData.currentWindDirection, 1) + 
                       "°, Target: " + String(state.lastDirection, 1) + "°";
     }
@@ -1487,15 +1486,20 @@ float MotorSensorController::getAdjustedElStartAngle() {
 // =============================================================================
 
 void MotorSensorController::activateCalMode(bool on) {
-    if (on) {
-        calMode = true;
-        global_fault = false;
-        setPWM(_pwm_pin_az, 255);
-        setPWM(_pwm_pin_el, 255);
-        _logger.info("calMode set to true");
-    } else {
-        calMode = false;
-        _logger.info("calMode set to false");
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+        if (on) {
+            calMode = true;
+            global_fault = false;
+            setPWM(_pwm_pin_az, 255);
+            setPWM(_pwm_pin_el, 255);
+            _logger.info("calMode set to true");
+        } else {
+            calMode = false;
+            _calRunTime = 0;  // Also clear any pending cal movement
+            _calAxis = "";
+            _logger.info("calMode set to false");
+        }
+        xSemaphoreGive(_calMutex);
     }
 }
 

@@ -115,12 +115,19 @@ String RotctlWifi::readCommandFromClient() {
 }
 
 void RotctlWifi::handlePositionCommand(const String& request) {
-    float az, el;
+    float az = 0.0f, el = 0.0f;  // Initialize to safe defaults
+    int parsed = 0;
     
     if (request.startsWith("\\P")) {
-        sscanf(request.c_str(), "\\P %f %f", &az, &el);
+        parsed = sscanf(request.c_str(), "\\P %f %f", &az, &el);
     } else {
-        sscanf(request.c_str(), "P %f %f", &az, &el);
+        parsed = sscanf(request.c_str(), "P %f %f", &az, &el);
+    }
+    
+    if (parsed != 2) {
+        _logger.error("Failed to parse position command: " + request);
+        _rotator_client.print("RPRT -1\n");  // Report error
+        return;
     }
     
     az = cleanupAzimuth(az);

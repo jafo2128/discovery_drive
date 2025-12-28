@@ -78,6 +78,7 @@ bool StellariumPoller::pollStellariumData() {
 
     // Configure HTTP client
     http.setConnectTimeout(5000);
+    http.setTimeout(5000);
     
     int httpResponseCode = http.GET();
     bool success = false;

@@ -257,7 +257,7 @@ private:
     // Wind tracking state
     unsigned long _lastManualSetpointTime = 0;
     unsigned long _lastWindTrackingUpdate = 0;
-    float _lastWindTrackingDirection = 0.0;
+    std::atomic<float> _lastWindTrackingDirection{0.0f};
     
     // Oscillation detection
     unsigned long _oscillationTimerStart = 0;
