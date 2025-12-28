@@ -116,7 +116,7 @@ private:
     
     // Timing constants
     static constexpr unsigned long POLL_INTERVAL_MS = 300000; // 5 minutes
-    static constexpr unsigned long RETRY_INTERVAL_MS = 300000; // 5 minutes on error
+    static constexpr unsigned long RETRY_INTERVAL_MS = 60000; // 60 seconds on error
     static constexpr unsigned long HTTP_TIMEOUT_MS = 15000;    // 15 seconds
     
     // State variables

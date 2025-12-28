@@ -227,11 +227,14 @@ void MotorSensorController::runSafetyLoop() {
 
     // Check azimuth over-spin
     if (!calMode) {
-        if (abs(needs_unwind) > 1) overSpinFault = true;
+        // Load once atomically and use that value consistently
+        int current_unwind = needs_unwind.load(std::memory_order_relaxed);
+
+        if (abs(current_unwind) > 1) overSpinFault = true;
 
         if (overSpinFault) {
             global_fault = true;
-            errorText += "Needs_unwind went beyond 1, AZ has over spun. Needs_unwind value: " + String(needs_unwind) + "\n";
+            errorText += "Needs_unwind went beyond 1, AZ has over spun. Needs_unwind value: " + String(current_unwind) + "\n";
             hasNewErrors = true;
         }
     }
@@ -1052,10 +1055,11 @@ void MotorSensorController::calcIfNeedsUnwind(float correctedAngle_az) {
     if (_quadrantNumber_az != _previousquadrantNumber_az) {
         if (!calMode) {
             // Handle unwinding logic at 180-degree crossings
+            // Use fetch_sub/fetch_add for explicit atomic read-modify-write
             if (_quadrantNumber_az == 2 && _previousquadrantNumber_az == 3) {
-                needs_unwind--;
+                needs_unwind.fetch_sub(1, std::memory_order_relaxed);
             } else if (_quadrantNumber_az == 3 && _previousquadrantNumber_az == 2) {
-                needs_unwind++;
+                needs_unwind.fetch_add(1, std::memory_order_relaxed);
             }
         }
         _previousquadrantNumber_az = _quadrantNumber_az;
@@ -1576,10 +1580,13 @@ void MotorSensorController::handleCalibrationMode() {
 // =============================================================================
 
 void MotorSensorController::handleOscillationDetection() {
+    // Load the atomic value ONCE and use it consistently throughout
+    int current_unwind = needs_unwind.load(std::memory_order_relaxed);
+    
     // Update needs_unwind in preferences when changed (outside calibration mode)
-    if (needs_unwind != _prev_needs_unwind && !calMode) {
-        _preferences.putInt("needs_unwind", needs_unwind);
-        _prev_needs_unwind = needs_unwind;
+    if (current_unwind != _prev_needs_unwind && !calMode) {
+        _preferences.putInt("needs_unwind", current_unwind);
+        _prev_needs_unwind = current_unwind;
 
         _logger.warn("THIS SHOULD NOT BE RUNNING CONSTANTLY OR THE EEPROM COULD CORRUPT");
 

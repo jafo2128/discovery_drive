@@ -541,16 +541,20 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
     if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
         int forecastCount = 0;
         int currentHour = getCurrentHourFromTime(currentTimeStr);
+        bool useTimeFiltering = true;
 
-        // If we couldn't parse current hour, default to showing next available hours
+        // If we couldn't parse current hour, disable time filtering
+        // and just take the first 3 available forecast hours
         if (currentHour < 0 || currentHour > 23) {
-            _logger.warn("Could not determine current hour from: " + currentTimeStr + ", using hour 0");
-            currentHour = -1;  // This will include all future hours starting from hour 0
+            _logger.warn("Could not determine current hour from: " + currentTimeStr + 
+                        ", using first available forecast hours");
+            useTimeFiltering = false;
+        } else {
+            _logger.debug("Current time: " + currentTimeStr + ", current hour: " + 
+                         String(currentHour) + ", looking for hours > " + String(currentHour));
         }
-
-        _logger.debug("Current time: " + currentTimeStr + ", current hour: " + String(currentHour) + ", looking for hours > " + String(currentHour));
         
-        // Find the next available hours starting from current hour + 1
+        // Find the next available hours
         for (size_t i = 0; i < hours.size() && forecastCount < 3; i++) {
             JsonObject hour = hours[i];
             
@@ -560,8 +564,10 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
             String hourTime = String(hourTimeStr);
             int hourValue = getHourFromTimeString(hourTime);
             
-            // Only include hours that are in the future (current hour + 1 or later)
-            if (hourValue > currentHour) {
+            // Either take all hours (when time filtering disabled) or only future hours
+            bool includeThisHour = !useTimeFiltering || (hourValue > currentHour);
+            
+            if (includeThisHour) {
                 _weatherData.forecastTimes[forecastCount] = hourTime;
                 _weatherData.forecastWindSpeed[forecastCount] = validateWindSpeed(hour["wind_kph"]);
                 _weatherData.forecastWindDirection[forecastCount] = validateWindDirection(hour["wind_degree"]);
