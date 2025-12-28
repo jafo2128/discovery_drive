@@ -167,11 +167,11 @@ bool WeatherPoller::pollWeatherData() {
         }
         
         // Configure HTTP client with explicit connection management
+        http.setReuse(true);  // Disable connection reuse to prevent stale connections
         http.setConnectTimeout(HTTP_TIMEOUT_MS);
         http.setTimeout(HTTP_TIMEOUT_MS);
         http.addHeader("User-Agent", "DiscoveryDish/1.0");
         http.addHeader("Connection", "close");  // Force connection close
-        http.setReuse(false);  // Disable connection reuse to prevent stale connections
         
         int httpResponseCode = http.GET();
         

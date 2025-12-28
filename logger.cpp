@@ -130,13 +130,16 @@ void Logger::addToWebLog(const String& message) {
 }
 
 void Logger::manageBufferSize() {
-    const size_t MAX_BUFFER_SIZE = 10000;  // 10KB buffer limit
+    const size_t MAX_BUFFER_SIZE = 10000;
     
     if (_newMessages.length() > MAX_BUFFER_SIZE) {
-        // Keep the most recent messages by removing older entries
         int splitPos = _newMessages.indexOf('\n', _newMessages.length() / 2);
         if (splitPos > 0) {
-            _newMessages = _newMessages.substring(splitPos + 1);
+            // More efficient - modify in place
+            _newMessages.remove(0, splitPos + 1);
+        } else {
+            // Fallback: clear if can't split cleanly
+            _newMessages = "";
         }
     }
 }

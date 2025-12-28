@@ -209,15 +209,16 @@ int WiFiManager::getSignalStrengthLevel(int32_t rssi) {
 
 // Static event handler
 void WiFiManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
-    if (_instance == nullptr) return;
-    
+    WiFiManager* inst = _instance;  // Local copy
+    if (inst == nullptr) return;
+
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
             case WIFI_EVENT_STA_START: {
-                _instance->_logger.info("WiFi station mode started");
+                inst->_logger.info("WiFi station mode started");
                 esp_err_t result = esp_wifi_connect();
                 if (result != ESP_OK && result != ESP_ERR_WIFI_CONN) {
-                    _instance->_logger.error("WiFi connect failed: " + String(result));
+                    inst->_logger.error("WiFi connect failed: " + String(result));
                 }
                 break;
             }
@@ -229,29 +230,29 @@ void WiFiManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int
                         event->bssid[0], event->bssid[1], event->bssid[2], 
                         event->bssid[3], event->bssid[4], event->bssid[5]);
                 
-                _instance->_logger.info("Connected to AP BSSID: " + String(bssid_str) + 
+                inst->_logger.info("Connected to AP BSSID: " + String(bssid_str) + 
                                        ", Channel: " + String(event->channel));
-                _instance->wifiConnected = true;
+                inst->wifiConnected = true;
                 break;
             }
             
             case WIFI_EVENT_STA_DISCONNECTED: {
                 wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*)event_data;
-                _instance->_logger.error("WiFi disconnected. Reason: " + String(event->reason));
+                inst->_logger.error("WiFi disconnected. Reason: " + String(event->reason));
 
                 // Handle roaming disconnections specially
                 if (event->reason == 8) {  // WIFI_REASON_ASSOC_LEAVE
-                    _instance->_logger.error("Disconnection due to roaming or AP request. Waiting before reconnecting...");
+                    inst->_logger.error("Disconnection due to roaming or AP request. Waiting before reconnecting...");
                     delay(500);
                     break;
                 }
                 
-                _instance->wifiConnected = false;
+                inst->wifiConnected = false;
                 
                 // Attempt reconnection
                 esp_err_t result = esp_wifi_connect();
                 if (result != ESP_OK && result != ESP_ERR_WIFI_CONN) {
-                    _instance->_logger.error("WiFi reconnect failed: " + String(result));
+                    inst->_logger.error("WiFi reconnect failed: " + String(result));
                 }
                 break;
             }
@@ -259,9 +260,9 @@ void WiFiManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int
     } 
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
-        _instance->_logger.info("Got IP: " + IPAddress(event->ip_info.ip.addr).toString());
+        inst->_logger.info("Got IP: " + IPAddress(event->ip_info.ip.addr).toString());
         
-        _instance->ip_addr = IPAddress(event->ip_info.ip.addr).toString();
-        _instance->wifiConnected = true;
+        inst->ip_addr = IPAddress(event->ip_info.ip.addr).toString();
+        inst->wifiConnected = true;
     }
 }

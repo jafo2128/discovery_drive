@@ -214,7 +214,8 @@ void MotorSensorController::runSafetyLoop() {
 
     // Check elevation bounds (if not in calibration mode)
     if (!calMode) {
-        if ((getCorrectedAngleEl() > 100 && getCorrectedAngleEl() < 350) || isnan(getCorrectedAngleEl())) {
+        float currentEl = getCorrectedAngleEl();
+        if ((currentEl > 100 && currentEl < 350) || isnan(currentEl)) {
             outOfBoundsFault = true;
         }
 
@@ -308,24 +309,23 @@ void MotorSensorController::updateWindStowStatus() {
         return;
     }
     
-    // Update at regular intervals
     unsigned long currentTime = millis();
     if (currentTime - _lastWindStowUpdate < WIND_STOW_UPDATE_INTERVAL) {
         return;
     }
     _lastWindStowUpdate = currentTime;
     
-    // Check if emergency stow should be active
-    if (_weatherPoller->shouldActivateEmergencyStow()) {
-        auto windSafetyData = _weatherPoller->getWindSafetyData();
+    // Get all data atomically once
+    WindSafetyData windSafetyData = _weatherPoller->getWindSafetyData();
+    
+    if (windSafetyData.emergencyStowActive) {
         setWindStowActive(true, windSafetyData.stowReason, windSafetyData.currentStowDirection);
-        
-        // Perform the actual stow positioning
         performWindStow();
     } else {
         setWindStowActive(false, "", 0.0);
     }
 }
+
 
 void MotorSensorController::setWindStowActive(bool active, const String& reason, float direction) {
     if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
@@ -449,12 +449,12 @@ WindTrackingState MotorSensorController::getWindTrackingState() {
 }
 
 bool MotorSensorController::shouldActivateWindTracking() {
-    if (_weatherPoller == nullptr) {
-        _logger.debug("Wind tracking blocked: No weather poller");
+    WeatherPoller* wp = _weatherPoller;  // Local copy
+    if (wp == nullptr) {
         return false;
     }
     
-    if (!_weatherPoller->isWindBasedHomeEnabled()) {
+    if (!wp->isWindBasedHomeEnabled()) {
         _logger.debug("Wind tracking blocked: Wind-based home not enabled in settings");
         return false;
     }
@@ -480,9 +480,9 @@ bool MotorSensorController::shouldActivateWindTracking() {
         return false;
     }
     
-    if (!_weatherPoller->isDataValid()) {
+    if (!wp->isDataValid()) {
         _logger.debug("Wind tracking blocked: Weather data not valid");
-        String error = _weatherPoller->getLastError();
+        String error = wp->getLastError();
         if (error.length() > 0) {
             _logger.debug("  Weather error: " + error);
         }
@@ -527,7 +527,7 @@ void MotorSensorController::performWindTracking() {
                  "°, Last: " + String(_lastWindTrackingDirection, 1) + "°");
     
     // Always move to the current optimal wind position (no threshold check)
-    if (fabs(optimalDirection - _lastWindTrackingDirection) > 0.1f) {
+    if (fabs(optimalDirection - _lastWindTrackingDirection) > 0.01f) {
         float directionChange = abs(optimalDirection - _lastWindTrackingDirection);
         
         String reason = (_lastWindTrackingDirection == -999.0) ? 
@@ -1500,12 +1500,12 @@ void MotorSensorController::activateCalMode(bool on) {
 }
 
 void MotorSensorController::calMoveMotor(const String& runTimeStr, const String& axis) {
-    if (!calMode) {
-        Serial.println("Calibration mode OFF; ignoring calMove request.");
-        return;
-    }
-    
     if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+        if (!calMode) {
+            xSemaphoreGive(_calMutex);
+            Serial.println("Calibration mode OFF; ignoring calMove request.");
+            return;
+        }
         _calRunTime = runTimeStr.toInt();
         _calAxis = axis;
         xSemaphoreGive(_calMutex);

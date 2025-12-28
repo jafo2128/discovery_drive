@@ -67,6 +67,10 @@ void INA219Manager::begin() {
 // =============================================================================
 
 void INA219Manager::ReadData() {
+    if (powerMutex == NULL) {
+        return;  // Sensor not initialized
+    }
+
     if (xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
         // Read raw sensor values atomically
         float shuntvoltage = _ina219.getShuntVoltage_mV();

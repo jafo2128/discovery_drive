@@ -27,7 +27,7 @@ SerialManager::SerialManager(Preferences& prefs, MotorSensorController& motorSen
 }
 
 void SerialManager::begin() {
-    _inputString.reserve(30);  // Reserve space for input string
+    _inputString.reserve(64);  // Reserve space for input string
     _stringComplete = false;
     _logger.info("SerialManager initialized");
 }
@@ -50,7 +50,9 @@ void SerialManager::runSerialLoop() {
 void SerialManager::readSerialInput() {
     while (Serial.available()) {
         char inChar = (char)Serial.read();
-        _inputString += inChar;
+        if (_inputString.length() < 63) {  // Prevent overflow
+            _inputString += inChar;
+        }
         
         if (inChar == '\n' || inChar == '\r') {
             _stringComplete = true;
