@@ -35,7 +35,7 @@ void WeatherPoller::begin() {
     // Load saved configuration
     _latitude = _preferences.getFloat("weather_lat", 0.0);
     _longitude = _preferences.getFloat("weather_lon", 0.0);
-    _pollingEnabled = _preferences.getBool("weather_enabled", true);
+    _pollingEnabled = _preferences.getBool("weather_enabled", false);
     _apiKey = _preferences.getString("weather_api_key", "");
     
     // Load wind safety configuration

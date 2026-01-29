@@ -673,7 +673,7 @@ function confirmResetNeedsUnwind() {
 }
 
 function confirmResetEEPROM() {
-  if (confirm("WARNING: Are you sure you want to reset the EEPROM?\n\nThis action could cause undefined elevation rotation which could damage your rotator! \n\n Ensure that the rotation plate has been REMOVED before resetting the EEPROM. \n\nThis will erase all saved settings and return the device to factory defaults. This action cannot be undone.")) {
+  if (confirm("WARNING: Are you sure you want to reset the EEPROM?\n\nThis will erase all saved settings and return the device to factory defaults. This action cannot be undone.")) {
     // Create and submit a hidden form to reset EEPROM
     var form = document.createElement('form');
     form.method = 'POST';

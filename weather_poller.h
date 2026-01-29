@@ -105,7 +105,7 @@ private:
     // Configuration
     std::atomic<float> _latitude{0.0};
     std::atomic<float> _longitude{0.0};
-    std::atomic<bool> _pollingEnabled{true};
+    std::atomic<bool> _pollingEnabled{false};
     String _apiKey = "";
     
     // Wind safety configuration
