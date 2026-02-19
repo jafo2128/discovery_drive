@@ -16,6 +16,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+ // Implements the Rotctl NET Protocol
+
 #include "rotctl_wifi.h"
 
 RotctlWifi::RotctlWifi(Preferences& prefs, MotorSensorController& motorSensorCtrl, Logger& logger)
