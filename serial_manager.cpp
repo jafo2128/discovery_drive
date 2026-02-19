@@ -119,7 +119,7 @@ bool SerialManager::processPositionQueries() {
 }
 
 bool SerialManager::processPositionCommands() {
-    if (_inputString.startsWith("AZ")) {
+    if ((_inputString.startsWith("AZ") && _inputString.length() > 2) || (_inputString.startsWith("EL") && _inputString.length() > 2)) {
         parseAndSetPosition();
         updateSerialActivity();
         return true;
@@ -217,30 +217,26 @@ bool SerialManager::processSystemCommands() {
 // =============================================================================
 
 void SerialManager::parseAndSetPosition() {
-    int delimiterIndex = _inputString.indexOf(' ');
-    if (delimiterIndex == -1) {
-        _logger.warn("Invalid AZ EL command format: " + _inputString);
-        return;
+    int elIndex = _inputString.indexOf("EL");
+    int azIndex = _inputString.indexOf("AZ");
+    
+    if (azIndex != -1) {
+        // Extract AZ value — ends at "EL" if present, otherwise end of string
+        String az_str = (elIndex != -1) ? _inputString.substring(azIndex + 2, elIndex) 
+                                        : _inputString.substring(azIndex + 2);
+        az_str.trim();
+        float az = validateAndCleanAzimuth(az_str.toFloat());
+        _motorSensorCtrl.setSetPointAz(az);
+        _logger.info("Serial AZ command - Az: " + String(az, 2) + "°");
     }
     
-    String az_string = _inputString.substring(0, delimiterIndex);
-    String el_string = _inputString.substring(delimiterIndex + 1);
-
-    // Parse azimuth
-    String az_number = az_string.substring(2);  // Remove "AZ" prefix
-    float az = az_number.toFloat();
-    az = validateAndCleanAzimuth(az);
-
-    // Parse elevation
-    String el_number = el_string.substring(2);  // Remove "EL" prefix
-    float el = el_number.toFloat();
-    el = validateAndCleanElevation(el);
-
-    // Set motor positions
-    _motorSensorCtrl.setSetPointAz(az);
-    _motorSensorCtrl.setSetPointEl(el);
-    
-    _logger.info("Serial position command - Az: " + String(az, 2) + "°, El: " + String(el, 2) + "°");
+    if (elIndex != -1) {
+        String el_str = _inputString.substring(elIndex + 2);
+        el_str.trim();
+        float el = validateAndCleanElevation(el_str.toFloat());
+        _motorSensorCtrl.setSetPointEl(el);
+        _logger.info("Serial EL command - El: " + String(el, 2) + "°");
+    }
 }
 
 float SerialManager::validateAndCleanAzimuth(float az) {
