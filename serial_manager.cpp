@@ -112,6 +112,24 @@ bool SerialManager::processPositionQueries() {
         updateSerialActivity();
         return true;
     }
+
+    // Accept both plain and escaped forms
+    // (Some clients send \dump_state or \P)
+    if (_inputString == "dump_state" || _inputString == "\\dump_state") {
+        // Match your firmware’s real supported ranges.
+        // Your current validation functions imply az 0..360, el 0..90.
+        const float minAz = 0.0f;
+        const float maxAz = 360.0f;
+        const float minEl = 0.0f;
+        const float maxEl = 90.0f;
+
+        Serial.println(String(minAz, 6));
+        Serial.println(String(maxAz, 6));
+        Serial.println(String(minEl, 6));
+        Serial.println(String(maxEl, 6));
+        updateSerialActivity();
+        return true;
+    }
     
     return false;
 }
@@ -203,6 +221,13 @@ bool SerialManager::processSystemCommands() {
     
     if (_inputString.startsWith("PLAY_ODE")) {
         _motorSensorCtrl.playOdeToJoy();
+        updateSerialActivity();
+        return true;
+    }
+
+    // rotctl quit (optional)
+    if (_inputString == "q" || _inputString == "Q") {
+        Serial.print("RPRT 0\n");
         updateSerialActivity();
         return true;
     }

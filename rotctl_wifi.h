@@ -48,6 +48,9 @@ private:
     void handleGetPositionCommand();
     void handleStopCommand();
     void handleResetCommand();
+    void handleParkCommand();
+    void handleDumpStateCommand();
+    void handleDumpCapsCommand();
     void disconnectClient();
     String readCommandFromClient();
     float cleanupAzimuth(float az);

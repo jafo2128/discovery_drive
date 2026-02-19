@@ -77,16 +77,28 @@ void RotctlWifi::handleClientCommands() {
     _logger.info("Received message: " + request);
     
     // Handle different rotctl commands
-    if (request.startsWith("\\P") || request.startsWith("P")) {
+    if (request.startsWith("\\P") || request.startsWith("P") || request.startsWith("\\set_pos") || request.startsWith("set_pos")) {
         handlePositionCommand(request);
-    } else if (request == "p") {
+    } else if (request == "p" || request == "\\get_pos") {
         handleGetPositionCommand();
-    } else if (request == "s") {
+    } else if (request == "S" || request == "\\stop") {
         handleStopCommand();
-    } else if (request == "R") {
+        _rotator_client.print("RPRT 0\n");
+    } else if (request.startsWith("R") || request.startsWith("\\reset")) {
         handleResetCommand();
+        _rotator_client.print("RPRT 0\n");
+    } else if (request == "K" || request == "\\park") {
+        handleParkCommand();
+        _rotator_client.print("RPRT 0\n");
+    } else if (request == "_" || request == "\\get_info") {
+        _rotator_client.print("Discovery Drive V1.0\n");
+    } else if (request == "?" || request == "dump_state" || request == "\\dump_state") {
+        handleDumpStateCommand();
+    } else if (request == "1" || request == "dump_caps" || request == "\\dump_caps") {
+        handleDumpCapsCommand();
     } else {
         _logger.error("Unexpected message format: " + request);
+        _rotator_client.print("RPRT -1\n");         // better than silence
     }
     
     _lastClientActivity = millis();
@@ -96,37 +108,118 @@ String RotctlWifi::readCommandFromClient() {
     String request = "";
     unsigned long startMillis = millis();
     
-    // Manual command reading to avoid blocking on readStringUntil('\n')
     while (millis() - startMillis < READ_TIMEOUT) {
-        char c;
         while (_rotator_client.available()) {
-            c = _rotator_client.read();
+            char c = _rotator_client.read();
             if (c == '\n') {
+                request.trim();  // Strip \r and any whitespace
                 return request;
             }
             request += c;
         }
-        if (c == '\n') {
-            break;
-        }
     }
     
+    request.trim();
     return request;
 }
 
+void RotctlWifi::handleDumpStateCommand() {
+    // NET rotctl expects:
+    // 1) protocol version
+    // 2) rotator model number behind the server
+    // 3-6) min/max az/el
+    //
+    // Protocol "0" uses plain numeric min/max lines.
+    // Protocol "1" tends to use key=value lines (min_az=..., etc.).
+
+    const int protoVer = 0;
+
+    // If you are the rotator directly (not a proxy to a serial rotator),
+    // you can return "0" or "2" here. Returning "0" is commonly used to mean "unknown".
+    const int backendModel = 2;
+
+    const float minAz = -360.0f;
+    const float maxAz =  360.0f;
+    const float minEl =    0.0f;
+    const float maxEl =   90.0f;
+
+    String resp;
+    resp.reserve(120);
+
+    resp += String(protoVer);    resp += "\n";
+    resp += String(backendModel);resp += "\n";
+
+    resp += String(minAz, 6);    resp += "\n";
+    resp += String(maxAz, 6);    resp += "\n";
+    resp += String(minEl, 6);    resp += "\n";
+    resp += String(maxEl, 6);    resp += "\n";
+
+    _rotator_client.print(resp);
+    _logger.info("Responded dump_state:\n" + resp);
+}
+
+void RotctlWifi::handleDumpCapsCommand() {
+    String resp;
+    resp.reserve(800);
+
+    resp += "Caps dump for model: 2\n";
+    resp += "Model name:\tDiscovery Drive\n";
+    resp += "Mfg name:\tKrakenRF\n";
+    resp += "Backend version:\t1.0\n";
+    resp += "Backend copyright:\tGPL\n";
+    resp += "Backend status:\tStable\n";
+    resp += "Rot type:\tAz/El\n";
+    resp += "Port type:\tNetwork link\n";
+    resp += "Write delay:\t0mS, timeout 2000mS, 3 retries\n";
+    resp += "Post Write delay:\t0mS\n";
+    resp += "Status flags:\tNone\n";
+    resp += "Get functions:\n";
+    resp += "Set functions:\n";
+    resp += "Extra functions:\n";
+    resp += "Get level:\n";
+    resp += "Set level:\n";
+    resp += "Extra levels:\n";
+    resp += "Get parameters:\n";
+    resp += "Set parameters:\n";
+    resp += "Extra parameters:\n";
+    resp += "Min Azimuth:\t-360.00\n";
+    resp += "Max Azimuth:\t360.00\n";
+    resp += "Min Elevation:\t0.00\n";
+    resp += "Max Elevation:\t90.00\n";
+    resp += "Has priv data:\tN\n";
+    resp += "Has Init:\tN\n";
+    resp += "Has Cleanup:\tN\n";
+    resp += "Has Open:\tY\n";
+    resp += "Has Close:\tY\n";
+    resp += "Can set Conf:\tN\n";
+    resp += "Can get Conf:\tN\n";
+    resp += "Can set Position:\tY\n";
+    resp += "Can get Position:\tY\n";
+    resp += "Can Stop:\tY\n";
+    resp += "Can Park:\tY\n";
+    resp += "Can Reset:\tY\n";
+    resp += "Can Move:\tN\n";       // Change to Y if you implement M
+    resp += "Can get Info:\tY\n";
+    resp += "Can get Status:\tN\n";
+    resp += "Can set Func:\tN\n";
+    resp += "Can get Func:\tN\n";
+    resp += "Can set Level:\tN\n";
+    resp += "Can get Level:\tN\n";
+    resp += "Can set Param:\tN\n";
+    resp += "Can get Param:\tN\n";
+
+    _rotator_client.print(resp);
+    _logger.info("Responded dump_caps");
+}
+
 void RotctlWifi::handlePositionCommand(const String& request) {
-    float az = 0.0f, el = 0.0f;  // Initialize to safe defaults
-    int parsed = 0;
+    float az = 0.0f, el = 0.0f;
     
-    if (request.startsWith("\\P")) {
-        parsed = sscanf(request.c_str(), "\\P %f %f", &az, &el);
-    } else {
-        parsed = sscanf(request.c_str(), "P %f %f", &az, &el);
-    }
-    
-    if (parsed != 2) {
+    // Find first space, parse numbers after it
+    int spaceIdx = request.indexOf(' ');
+    if (spaceIdx < 0 || sscanf(request.c_str() + spaceIdx, " %f %f", &az, &el) != 2) {
         _logger.error("Failed to parse position command: " + request);
-        _rotator_client.print("RPRT -1\n");  // Report error
+        _rotator_client.print("RPRT -1\n");
         return;
     }
     
@@ -162,8 +255,15 @@ void RotctlWifi::handleStopCommand() {
 }
 
 void RotctlWifi::handleResetCommand() {
+    // Soft reset - reinitialize the controller
+    _logger.info("Rotator reset requested");
+    ESP.restart();
+}
+
+void RotctlWifi::handleParkCommand() {
     _motorSensorCtrl.setSetPointAz(0);
-    _motorSensorCtrl.setSetPointEl(0);
+    _motorSensorCtrl.setSetPointEl(0); 
+    _logger.info("Parking rotator to home position (0, 0)");
 }
 
 float RotctlWifi::cleanupAzimuth(float az) {
