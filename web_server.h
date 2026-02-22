@@ -83,6 +83,10 @@ private:
     String _loginUser = "";
     String _loginPassword = "";
 
+    // Firmware update state
+    bool _firmwareUpdateSuccess = false;
+    String _firmwareUpdateError = "";
+
     // Thread synchronization
     SemaphoreHandle_t _fileMutex = NULL;
     SemaphoreHandle_t _loginUserMutex = NULL;

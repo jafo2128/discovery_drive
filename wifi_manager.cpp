@@ -31,6 +31,7 @@ WiFiManager::WiFiManager(Preferences& prefs, Logger& logger) : _preferences(pref
 
 // Core functionality methods
 void WiFiManager::begin() {
+    _hostname = _preferences.getString("hostname", "discoverydrive");
     connectToWiFi();
 
     if (MDNS.begin(_hostname)) {
@@ -205,6 +206,10 @@ int WiFiManager::getSignalStrengthLevel(int32_t rssi) {
     if (rssi >= -70) return 2;      // 2 bars
     if (rssi >= -80) return 1;      // 1 bar
     return 0;                       // No signal
+}
+
+String WiFiManager::getHostname() {
+    return _hostname;
 }
 
 // Static event handler

@@ -52,6 +52,7 @@ public:
     int32_t getRSSI();
     void printCurrentBSSID();
     int getSignalStrengthLevel(int32_t rssi);
+    String getHostname();
     
     // Public state variables
     String ip_addr = "0.0.0.0";

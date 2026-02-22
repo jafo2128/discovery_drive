@@ -240,6 +240,11 @@
         <th>Default</th>
       </tr>
       <tr>
+        <td>Current Hostname</td>
+        <td><span id="hostname">Loading...</span></td>
+        <td>discoverydrive</td>
+      </tr>
+      <tr>
         <td>Current HTTP Port</td>
         <td><span id="http_port">Loading...</span></td>
         <td>80</td>
@@ -250,6 +255,11 @@
         <td>4533</td>
       </tr>
     </table>
+    <form action='/setHostname' method='POST'>
+      <label for='hostname'>New Hostname:</label>
+      <input type='text' id='hostnameInput' name='hostname' maxlength="32">
+      <input type='submit' value='Submit'>
+    </form>
     <form action='/setPorts' method='POST'>
       <label for='http_port'>New HTTP Port:</label>
       <input type='number' id='http_port' name='http_port' min="1" max="65535">

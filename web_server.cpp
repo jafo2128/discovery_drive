@@ -314,6 +314,45 @@ void WebServerManager::setupConfigurationRoutes() {
         }
     });
 
+    server->on("/setHostname", HTTP_POST, [this]() {
+        if (server->hasArg("hostname")) {
+            String hostname = server->arg("hostname");
+            hostname.trim();
+            if (hostname.length() > 0 && hostname.length() <= 32) {
+                preferences.putString("hostname", hostname);
+                String newUrl = "http://" + hostname + ".local:" + String(preferences.getInt("http_port", 80));
+                String htmlResponse = "<!DOCTYPE html>\n"
+                    "<html>\n<head>\n<title>Hostname Updated!</title>\n"
+                    "<script>\n"
+                    "  function enableButton() {\n"
+                    "    var countdown = 10;\n"
+                    "    var button = document.getElementById('backButton');\n"
+                    "    var timer = setInterval(function() {\n"
+                    "      button.innerHTML = 'Go Back (' + countdown + ')';\n"
+                    "      countdown--;\n"
+                    "      if (countdown < 0) {\n"
+                    "        clearInterval(timer);\n"
+                    "        button.innerHTML = 'Go Back';\n"
+                    "        button.disabled = false;\n"
+                    "      }\n"
+                    "    }, 1000);\n"
+                    "  }\n"
+                    "</script>\n</head>\n"
+                    "<body onload=\"enableButton()\">\n"
+                    "<h1>Hostname Updated! Restarting...</h1>\n"
+                    "<button id='backButton' onclick=\"window.location.href='" + newUrl + "'\" disabled>Go Back (10)</button>\n"
+                    "</body>\n</html>\n";
+                server->send(200, "text/html", htmlResponse);
+                delay(1000);
+                ESP.restart();
+            } else {
+                server->send(400, "text/plain", "Hostname must be 1-32 characters");
+            }
+        } else {
+            server->send(400, "text/plain", "Missing hostname parameter");
+        }
+    });
+
     server->on("/setPorts", HTTP_POST, [this]() {
         bool updated = false;
 
@@ -677,6 +716,7 @@ void WebServerManager::setupAPIRoutes() {
         doc["maxDualMotorElSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_dual_motor_el_speed));
         doc["maxSingleMotorAzSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_single_motor_az_speed));
         doc["maxSingleMotorElSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_single_motor_el_speed));
+        doc["hostname"] = preferences.getString("hostname", "discoverydrive");
         doc["wifissid"] = preferences.getString("wifi_ssid", "discoverydish_HOTSPOT");
         doc["loginUser"] = preferences.getString("loginUser", "");
         
@@ -834,22 +874,37 @@ void WebServerManager::setupFileUploadRoute() {
 }
 
 void WebServerManager::setupFirmwareUploadRoute() {
-    server->on("/firmware", HTTP_POST, 
+    server->on("/firmware", HTTP_POST,
         [this]() {
-            String html = "<!DOCTYPE html><html><head><title>Firmware Update</title>";
-            html += "<style>body{font-family:Arial;margin:40px;text-align:center;}";
-            html += ".success{background:#d4edda;color:#155724;padding:20px;border-radius:5px;margin:20px 0;}";
-            html += "</style></head><body>";
-            html += "<h1>Firmware Update Complete</h1>";
-            html += "<div class='success'>Firmware updated successfully! Device will restart...</div>";
-            html += "<script>setTimeout(function(){ window.location.href='/'; }, 3000);</script>";
-            html += "</body></html>";
-            
-            server->send(200, "text/html", html);
-            
-            delay(1000);
-            ESP.restart();
-        }, 
+            if (_firmwareUpdateSuccess) {
+                String html = "<!DOCTYPE html><html><head><title>Firmware Update</title>";
+                html += "<style>body{font-family:Arial;margin:40px;text-align:center;}";
+                html += ".success{background:#d4edda;color:#155724;padding:20px;border-radius:5px;margin:20px 0;}";
+                html += "</style></head><body>";
+                html += "<h1>Firmware Update Complete</h1>";
+                html += "<div class='success'>Firmware updated successfully! Device will restart...</div>";
+                html += "<script>setTimeout(function(){ window.location.href='/'; }, 3000);</script>";
+                html += "</body></html>";
+
+                server->send(200, "text/html", html);
+
+                delay(1000);
+                ESP.restart();
+            } else {
+                String html = "<!DOCTYPE html><html><head><title>Firmware Update Failed</title>";
+                html += "<style>body{font-family:Arial;margin:40px;text-align:center;}";
+                html += ".error{background:#f8d7da;color:#721c24;padding:20px;border-radius:5px;margin:20px 0;}";
+                html += "button{background:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;font-size:16px;margin:10px;}";
+                html += "button:hover{background:#45a049;}</style></head><body>";
+                html += "<h1>Firmware Update Failed</h1>";
+                html += "<div class='error'>" + _firmwareUpdateError + "</div>";
+                html += "<button onclick=\"window.location.href='/ota'\">Try Again</button>";
+                html += "<button onclick=\"window.location.href='/'\">Back to Main</button>";
+                html += "</body></html>";
+
+                server->send(400, "text/html", html);
+            }
+        },
         [this]() {
             handleFirmwareUpload();
         }
@@ -1053,7 +1108,7 @@ void WebServerManager::handleFileUpload() {
 
 void WebServerManager::handleFirmwareUpload() {
     HTTPUpload& upload = server->upload();
-    
+
     static bool updateStarted = false;
     static size_t totalSize = 0;
     static const size_t MAX_FIRMWARE_SIZE = 3 * 1024 * 1024; // 3MB limit
@@ -1063,56 +1118,70 @@ void WebServerManager::handleFirmwareUpload() {
     if (upload.status == UPLOAD_FILE_START) {
         _logger.info("Starting firmware upload: " + upload.filename);
 
-        if (!upload.filename.endsWith(".bin")) {
-            _logger.error("Invalid firmware file type");
-            return;
-        }
-        
+        _firmwareUpdateSuccess = false;
+        _firmwareUpdateError = "";
         updateStarted = false;
         totalSize = 0;
-        
+
+        if (!upload.filename.endsWith(".bin")) {
+            _logger.error("Invalid firmware file type");
+            _firmwareUpdateError = "Invalid file type. Please upload a .bin file.";
+            return;
+        }
+
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+        // Skip writing if we already have an error
+        if (_firmwareUpdateError.length() > 0) return;
+
         // Check size limit
         if (totalSize + upload.currentSize > MAX_FIRMWARE_SIZE) {
             _logger.error("Firmware too large - " + String(totalSize + upload.currentSize) + " bytes exceeds " + String(MAX_FIRMWARE_SIZE) + " byte limit");
+            _firmwareUpdateError = "Firmware file too large. Maximum size is 3MB.";
             if (updateStarted) {
                 Update.abort();
                 updateStarted = false;
             }
             return;
         }
-        
+
         if (!updateStarted) {
             _logger.debug("Starting firmware update");
             if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
                 _logger.error("Cannot start firmware update");
+                _firmwareUpdateError = "Cannot start firmware update. Not enough space or flash error.";
                 return;
             }
             updateStarted = true;
         }
-        
+
         if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
             _logger.error("Firmware write failed");
+            _firmwareUpdateError = "Firmware write failed during upload.";
             Update.abort();
             updateStarted = false;
             return;
         }
-        
+
         totalSize += upload.currentSize;
         _logger.debug("Firmware written: " + String(upload.currentSize) + " bytes (total: " + String(totalSize) + ")");
-        
+
     } else if (upload.status == UPLOAD_FILE_END) {
         if (updateStarted) {
             if (Update.end(true)) {
                 _logger.info("Firmware update completed: " + String(totalSize) + " bytes");
+                _firmwareUpdateSuccess = true;
             } else {
-                _logger.error("Firmware update failed");
+                _logger.error("Firmware update finalization failed");
+                _firmwareUpdateError = "Firmware update failed during finalization. Current firmware unchanged.";
             }
+        } else if (_firmwareUpdateError.length() == 0) {
+            _firmwareUpdateError = "Firmware update was not started. Upload may have been invalid.";
         }
         updateStarted = false;
-        
+
     } else if (upload.status == UPLOAD_FILE_ABORTED) {
         _logger.debug("Firmware upload aborted");
+        _firmwareUpdateError = "Firmware upload was aborted.";
         if (updateStarted) {
             Update.abort();
             updateStarted = false;

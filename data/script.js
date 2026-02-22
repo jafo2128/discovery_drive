@@ -49,6 +49,7 @@ setInterval(function() {
       document.getElementById("maxDualMotorElSpeed").innerHTML = data.maxDualMotorElSpeed;
       document.getElementById("maxSingleMotorAzSpeed").innerHTML = data.maxSingleMotorAzSpeed;
       document.getElementById("maxSingleMotorElSpeed").innerHTML = data.maxSingleMotorElSpeed;
+      document.getElementById("hostname").innerHTML = data.hostname;
       document.getElementById("wifissid").innerHTML = data.wifissid;
       document.getElementById("loginUser").innerHTML = data.loginUser;
       document.getElementById("passwordStatus").innerHTML = data.passwordStatus;
