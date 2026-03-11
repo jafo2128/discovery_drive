@@ -18,6 +18,11 @@
  
 #include "web_server.h"
 
+// Rounding helpers — control JSON precision without String heap allocations
+static inline float r2(float v) { return roundf(v * 100.0f) / 100.0f; }
+static inline float r1(float v) { return roundf(v * 10.0f) / 10.0f; }
+static inline float r3(float v) { return roundf(v * 1000.0f) / 1000.0f; }
+
 // =============================================================================
 // CONSTRUCTOR AND INITIALIZATION
 // =============================================================================
@@ -113,6 +118,9 @@ void WebServerManager::setupMainPageRoutes() {
         
         bool stellariumOn = preferences.getBool("stellariumOn", false);
         html.replace("%var_stellariumOn_checked%", stellariumOn ? "checked" : "");
+        html.replace("%var_extendedEl_checked%", msc.isExtendedElEnabled() ? "checked" : "");
+        html.replace("%var_autoHome_checked%", msc.isAutoHomeEnabled() ? "checked" : "");
+        html.replace("%var_smoothTracking_checked%", msc.isSmoothTrackingEnabled() ? "checked" : "");
 
         server->send(200, "text/html", html);
     });
@@ -179,7 +187,8 @@ void WebServerManager::setupMotorControlRoutes() {
             String update_var = server->arg("new_setpoint_el");
             if (update_var.length() != 0) {
                 float el;
-                if (parseFloat(update_var, el) >= 0 && el <= 90) {
+                float minEl = msc.isExtendedElEnabled() ? -90.0f : 0.0f;
+                if (parseFloat(update_var, el) && el >= minEl && el <= 90) {
                     msc.setSetPointEl(el);
                 }
             }
@@ -210,11 +219,28 @@ void WebServerManager::setupMotorControlRoutes() {
             homeAz = weatherPoller.getWindBasedHomePosition();
             _logger.info("Using wind-based home position: " + String(homeAz, 1) + "°");
         }
-        
+
+        msc.forceStopMs(100);
         msc.setSetPointAz(homeAz);
         msc.setSetPointEl(homeEl);
         server->send(204);
-    });    
+    });
+
+    server->on("/stopMotors", HTTP_POST, [this]() {
+        msc.forceStopMs(100);
+
+        float az = fmod(msc.getCorrectedAngleAz(), 360.0f);
+        if (az < 0) az += 360.0f;
+        msc.setSetPointAz(az);
+
+        float el = msc.getCorrectedAngleEl();
+        if (el > 180.0f) el -= 360.0f;
+        float minEl = msc.isExtendedElEnabled() ? -90.0f : 0.0f;
+        el = constrain(el, minEl, 90.0f);
+        msc.setSetPointEl(el);
+
+        server->send(204);
+    });
 
     server->on("/calon", HTTP_GET, [this]() {
         msc.activateCalMode(true);
@@ -272,6 +298,44 @@ void WebServerManager::setupMotorControlRoutes() {
         _logger.debug("SingleMotorMode OFF");
         server->send(200, "text/plain", "SingleMotorMode OFF");
     });
+
+    server->on("/directionLockOn", HTTP_GET, [this]() {
+        msc.setDirectionLockEnabled(true);
+        server->send(200, "text/plain", "Direction lock ON");
+    });
+
+    server->on("/directionLockOff", HTTP_GET, [this]() {
+        msc.setDirectionLockEnabled(false);
+        server->send(200, "text/plain", "Direction lock OFF");
+    });
+
+    server->on("/extendedElOn", HTTP_GET, [this]() {
+        msc.setExtendedElEnabled(true);
+        server->send(200, "text/plain", "Extended elevation ON");
+    });
+    server->on("/extendedElOff", HTTP_GET, [this]() {
+        msc.setExtendedElEnabled(false);
+        server->send(200, "text/plain", "Extended elevation OFF");
+    });
+
+    server->on("/autoHomeOn", HTTP_GET, [this]() {
+        msc.setAutoHomeEnabled(true);
+        server->send(200, "text/plain", "Auto-home ON");
+    });
+    server->on("/autoHomeOff", HTTP_GET, [this]() {
+        msc.setAutoHomeEnabled(false);
+        server->send(200, "text/plain", "Auto-home OFF");
+    });
+
+    server->on("/smoothTrackingOn", HTTP_GET, [this]() {
+        msc.setSmoothTrackingEnabled(true);
+        server->send(200, "text/plain", "Smooth tracking ON");
+    });
+    server->on("/smoothTrackingOff", HTTP_GET, [this]() {
+        msc.setSmoothTrackingEnabled(false);
+        server->send(200, "text/plain", "Smooth tracking OFF");
+    });
+
 }
 
 void WebServerManager::setupConfigurationRoutes() {
@@ -388,7 +452,7 @@ void WebServerManager::setupConfigurationRoutes() {
         if (server->hasArg("maxDualMotorAzSpeed")) {
             String azSpeedValue = server->arg("maxDualMotorAzSpeed");
             if (azSpeedValue.length() > 0) {
-                msc.max_dual_motor_az_speed = msc.convertPercentageToSpeed(azSpeedValue.toFloat());
+                msc.max_dual_motor_az_speed = msc.convertPercentageToSpeed(azSpeedValue.toFloat(), msc.MIN_AZ_SPEED);
                 preferences.putInt("maxDMAzSpeed", msc.max_dual_motor_az_speed);
             }
         }
@@ -396,7 +460,7 @@ void WebServerManager::setupConfigurationRoutes() {
         if (server->hasArg("maxDualMotorElSpeed")) {
             String elSpeedValue = server->arg("maxDualMotorElSpeed");
             if (elSpeedValue.length() > 0) {
-                msc.max_dual_motor_el_speed = msc.convertPercentageToSpeed(elSpeedValue.toFloat());
+                msc.max_dual_motor_el_speed = msc.convertPercentageToSpeed(elSpeedValue.toFloat(), msc.MIN_EL_SPEED);
                 preferences.putInt("maxDMElSpeed", msc.max_dual_motor_el_speed);
             }
         }
@@ -407,7 +471,7 @@ void WebServerManager::setupConfigurationRoutes() {
         if (server->hasArg("maxSingleMotorAzSpeed")) {
             String azSpeedValue = server->arg("maxSingleMotorAzSpeed");
             if (azSpeedValue.length() > 0) {
-                msc.max_single_motor_az_speed = msc.convertPercentageToSpeed(azSpeedValue.toFloat());
+                msc.max_single_motor_az_speed = msc.convertPercentageToSpeed(azSpeedValue.toFloat(), msc.MIN_AZ_SPEED);
                 preferences.putInt("maxSMAzSpeed", msc.max_single_motor_az_speed);
             }
         }
@@ -415,7 +479,7 @@ void WebServerManager::setupConfigurationRoutes() {
         if (server->hasArg("maxSingleMotorElSpeed")) {
             String elSpeedValue = server->arg("maxSingleMotorElSpeed");
             if (elSpeedValue.length() > 0) {
-                msc.max_single_motor_el_speed = msc.convertPercentageToSpeed(elSpeedValue.toFloat());
+                msc.max_single_motor_el_speed = msc.convertPercentageToSpeed(elSpeedValue.toFloat(), msc.MIN_EL_SPEED);
                 preferences.putInt("maxSMElSpeed", msc.max_single_motor_el_speed);
             }
         }
@@ -471,16 +535,28 @@ void WebServerManager::setupConfigurationRoutes() {
             }
         };
 
-        setIntParam("P_el", [this](int v) { msc.setPEl(v); }, -1000, 1000);
-        setIntParam("P_az", [this](int v) { msc.setPAz(v); }, -1000, 1000);
+        setIntParam("P_el", [this](int v) { msc.setPEl(v); }, 0, 1000);
+        setIntParam("P_az", [this](int v) { msc.setPAz(v); }, 0, 1000);
         setIntParam("MIN_EL_SPEED", [this](int v) { msc.setMinElSpeed(v); }, 0, 255);
         setIntParam("MIN_AZ_SPEED", [this](int v) { msc.setMinAzSpeed(v); }, 0, 255);
-        setIntParam("MAX_FAULT_POWER", [this](int v) { msc.setMaxPowerBeforeFault(v); }, 1, 25);
+        setIntParam("MAX_FAULT_POWER_AZ", [this](int v) { msc.setMaxPowerFaultAz(v); }, 1, 25);
+        setIntParam("MAX_FAULT_POWER_EL", [this](int v) { msc.setMaxPowerFaultEl(v); }, 1, 25);
+        setIntParam("MAX_FAULT_POWER_TOTAL", [this](int v) { msc.setMaxPowerFaultTotal(v); }, 1, 25);
         setIntParam("MIN_VOLTAGE_THRESHOLD", [this](int v) { msc.setMinVoltageThreshold(v); }, 1, 20);
         
-        setFloatParam("MIN_AZ_TOLERANCE", [this](float v) { msc.setMinAzTolerance(v); }, 0.1f, 10.0f);
-        setFloatParam("MIN_EL_TOLERANCE", [this](float v) { msc.setMinElTolerance(v); }, 0.1f, 10.0f);
-        
+        setFloatParam("MIN_AZ_TOLERANCE", [this](float v) { msc.setMinAzTolerance(v); }, 0.01f, 10.0f);
+        setFloatParam("MIN_EL_TOLERANCE", [this](float v) { msc.setMinElTolerance(v); }, 0.01f, 10.0f);
+        setFloatParam("I_el", [this](float v) { msc.setIEl(v); }, 0.0f, 1000.0f);
+        setFloatParam("I_az", [this](float v) { msc.setIAz(v); }, 0.0f, 1000.0f);
+        setFloatParam("D_el", [this](float v) { msc.setDEl(v); }, 0.0f, 1000.0f);
+        setFloatParam("D_az", [this](float v) { msc.setDAz(v); }, 0.0f, 1000.0f);
+        setIntParam("autoHomeMins", [this](int v) { msc.setAutoHomeTimeout(v); }, 1, 60);
+
+        setFloatParam("smKalQ", [this](float v) { msc.setKalmanQ(v); }, 0.01f, 100.0f);
+        setFloatParam("smKalR", [this](float v) { msc.setKalmanR(v); }, 0.01f, 100.0f);
+        setIntParam("smMinAzSpd", [this](int v) { msc.setMinSmoothAzSpeed(v); }, 0, 255);
+        setIntParam("smMinElSpd", [this](int v) { msc.setMinSmoothElSpeed(v); }, 0, 255);
+
         if (updated) {
             _logger.info("Advanced parameters updated via web interface");
         }
@@ -683,119 +759,95 @@ void WebServerManager::setupAPIRoutes() {
         server->send(200, "text/plain", "Stellarium OFF");
     });
 
-    server->on("/variable", HTTP_GET, [this]() {
-        static DynamicJsonDocument doc(8192);
+    // Real-time status endpoint - polled frequently, no NVS reads
+    server->on("/status", HTTP_GET, [this]() {
+        static DynamicJsonDocument doc(6144);
         doc.clear();
 
-        // Motor and control data
-        doc["correctedAngle_el"] = String(msc.getCorrectedAngleEl());
-        doc["correctedAngle_az"] = String(msc.getCorrectedAngleAz());
-        doc["setpoint_az"] = String(msc.getSetPointAz());
-        doc["setpoint_el"] = String(msc.getSetPointEl());
-        doc["setPointState_az"] = String((int)msc.setPointState_az);
-        doc["setPointState_el"] = String((int)msc.setPointState_el);
-        doc["error_az"] = String(msc.getErrorAz());
-        doc["error_el"] = String(msc.getErrorEl());
-        doc["el_startAngle"] = String(msc.getElStartAngle());
-        doc["needs_unwind"] = String(msc.needs_unwind);
-        
+        // Motor and control data — use native numeric types to avoid String heap allocations
+        float displayEl = msc.getCorrectedAngleEl();
+        if (displayEl > 180.0f) displayEl -= 360.0f;
+        doc["correctedAngle_el"] = r2(displayEl);
+        doc["correctedAngle_az"] = r2(msc.getCorrectedAngleAz());
+        doc["setpoint_az"] = r2(msc.getSetPointAz());
+        doc["setpoint_el"] = r2(msc.getSetPointEl());
+        doc["setPointState_az"] = (int)msc.setPointState_az.load();
+        doc["setPointState_el"] = (int)msc.setPointState_el.load();
+        doc["error_az"] = r2((float)msc.getErrorAz());
+        doc["error_el"] = r2((float)msc.getErrorEl());
+        doc["el_startAngle"] = r2(msc.getElStartAngle());
+        doc["needs_unwind"] = msc.needs_unwind.load();
+
         // Status flags
         doc["calMode"] = msc.calMode ? "ON" : "OFF";
-        doc["i2cErrorFlag_az"] = String(msc.i2cErrorFlag_az);
-        doc["i2cErrorFlag_el"] = String(msc.i2cErrorFlag_el);
-        doc["faultTripped"] = String((int)msc.global_fault);
-        doc["badAngleFlag"] = String((int)msc.badAngleFlag);
-        doc["magnetFault"] = String((int)msc.magnetFault);
-        doc["isAzMotorLatched"] = String(msc._isAzMotorLatched);
-        doc["isElMotorLatched"] = String(msc._isElMotorLatched);
+        doc["i2cErrorFlag_az"] = (int)msc.i2cErrorFlag_az.load();
+        doc["i2cErrorFlag_el"] = (int)msc.i2cErrorFlag_el.load();
+        doc["faultTripped"] = (int)msc.global_fault.load();
+        doc["badAngleFlag"] = (int)msc.badAngleFlag.load();
+        doc["magnetFault"] = (int)msc.magnetFault.load();
+        doc["isAzMotorLatched"] = (int)msc._isAzMotorLatched.load();
+        doc["isElMotorLatched"] = (int)msc._isElMotorLatched.load();
+        doc["motorSpeedPctAz"] = msc.getMotorSpeedPctAz();
+        doc["motorSpeedPctEl"] = msc.getMotorSpeedPctEl();
+        doc["serialActive"] = (int)serialManager.serialActive.load();
 
-        // Configuration data
-        doc["http_port"] = String(preferences.getInt("http_port", 80));
-        doc["rotctl_port"] = String(preferences.getInt("rotctl_port", 4533));
-        doc["maxDualMotorAzSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_dual_motor_az_speed));
-        doc["maxDualMotorElSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_dual_motor_el_speed));
-        doc["maxSingleMotorAzSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_single_motor_az_speed));
-        doc["maxSingleMotorElSpeed"] = String(msc.convertSpeedToPercentage((float)msc.max_single_motor_el_speed));
-        doc["hostname"] = preferences.getString("hostname", "discoverydrive");
-        doc["wifissid"] = preferences.getString("wifi_ssid", "discoverydish_HOTSPOT");
-        doc["loginUser"] = preferences.getString("loginUser", "");
-        
-        String passwordStatus = (preferences.getString("loginUser", "").length() != 0 && 
-                               preferences.getString("loginPassword", "").length() != 0 && 
-                               _loginRequired) ? "True" : "False";
-        doc["passwordStatus"] = passwordStatus;
-        doc["serialActive"] = String(serialManager.serialActive);
-
-        // Mode indicators
+        // Mode states (in-memory reads)
         doc["singleMotorModeText"] = msc.singleMotorMode ? "ON" : "OFF";
-        doc["stellariumPollingOn"] = preferences.getBool("stellariumOn", false) ? "ON" : "OFF";
-
-        // Stellarium data
-        doc["stellariumServerIPText"] = preferences.getString("stelServIP", "NO IP SET");
-        doc["stellariumServerPortText"] = preferences.getString("stelServPort", "8090");
+        doc["directionLockEnabled"] = msc.isDirectionLockEnabled() ? "ON" : "OFF";
+        doc["extendedElEnabled"] = msc.isExtendedElEnabled() ? "ON" : "OFF";
         doc["stellariumConnActive"] = stellariumPoller.getStellariumConnActive() ? "Connected" : "Disconnected";
 
-        // Advanced parameters
-        doc["toleranceAz"] = String(msc.getMinAzTolerance());
-        doc["toleranceEl"] = String(msc.getMinElTolerance());
-        doc["P_el"] = String(msc.getPEl());
-        doc["P_az"] = String(msc.getPAz());
-        doc["MIN_EL_SPEED"] = String(msc.getMinElSpeed());
-        doc["MIN_AZ_SPEED"] = String(msc.getMinAzSpeed());
-        doc["MIN_AZ_TOLERANCE"] = String(msc.getMinAzTolerance());
-        doc["MIN_EL_TOLERANCE"] = String(msc.getMinElTolerance());
-        doc["MAX_FAULT_POWER"] = String(msc.getMaxPowerBeforeFault());
-        doc["MIN_VOLTAGE_THRESHOLD"] = String(msc.getMinVoltageThreshold());
-        doc["azOffset"] = String(msc.getAzOffset(), 3);
-        doc["elOffset"] = String(msc.getElOffset(), 3);
+        // Power data
+        doc["inputVoltage"] = r2(ina219Manager.getLoadVoltage());
+        doc["currentDraw"] = r2(ina219Manager.getCurrent() / 1000);
+        doc["rotatorPowerDraw"] = r2(ina219Manager.getPower());
 
-        // Power and connectivity data
-        doc["inputVoltage"] = String(ina219Manager.getLoadVoltage());
-        doc["currentDraw"] = String(ina219Manager.getCurrent() / 1000);
-        doc["rotatorPowerDraw"] = String(ina219Manager.getPower());
-
+        // Network data
         int rssi = wifiManager.getRSSI();
-        doc["rssi"] = String(rssi);
+        doc["rssi"] = rssi;
         doc["level"] = wifiManager.getSignalStrengthLevel(rssi);
         doc["ip_addr"] = wifiManager.ip_addr;
         doc["rotctl_client_ip"] = rotctlWifi.getRotctlClientIP();
         doc["bssid"] = wifiManager.getCurrentBSSID();
         doc["wifi_channel"] = wifiManager.getCurrentWiFiChannel();
 
-        // Logging data
-        doc["newLogMessages"] = _logger.getNewLogMessages();
+        // Log messages
+        {
+            String logMsgs = _logger.getNewLogMessages();
+            static const size_t MAX_LOG_IN_JSON = 2048;
+            if (logMsgs.length() > MAX_LOG_IN_JSON) {
+                int cutPos = logMsgs.indexOf('\n', logMsgs.length() - MAX_LOG_IN_JSON);
+                if (cutPos > 0) {
+                    logMsgs = logMsgs.substring(cutPos + 1);
+                } else {
+                    logMsgs = logMsgs.substring(logMsgs.length() - MAX_LOG_IN_JSON);
+                }
+            }
+            doc["newLogMessages"] = logMsgs;
+        }
         doc["currentDebugLevel"] = _logger.getDebugLevel();
         doc["serialOutputDisabled"] = _logger.getSerialOutputDisabled();
 
-        // Weather data
+        // Weather data (in-memory via mutex)
         WeatherData weatherData = weatherPoller.getWeatherData();
-        doc["weatherEnabled"] = String(weatherPoller.isPollingEnabled() ? "ON" : "OFF");
-        doc["weatherApiKeyConfigured"] = String(weatherPoller.isApiKeyConfigured() ? "YES" : "NO");
-        doc["weatherLocationConfigured"] = String(weatherPoller.isLocationConfigured() ? "YES" : "NO");
-        doc["weatherLatitude"] = String(weatherPoller.getLatitude(), 6);
-        doc["weatherLongitude"] = String(weatherPoller.getLongitude(), 6);
-        
         if (weatherData.dataValid) {
-            // Current weather
             doc["weatherDataValid"] = "YES";
-            doc["currentWindSpeed"] = String(weatherData.currentWindSpeed, 1);
-            doc["currentWindDirection"] = String(weatherData.currentWindDirection, 0);
-            doc["currentWindGust"] = String(weatherData.currentWindGust, 1);
+            doc["currentWindSpeed"] = r1(weatherData.currentWindSpeed);
+            doc["currentWindDirection"] = r1(weatherData.currentWindDirection);
+            doc["currentWindGust"] = r1(weatherData.currentWindGust);
             doc["currentWeatherTime"] = weatherData.currentTime;
-            
-            // Forecast data (next 3 hours)
+
             JsonArray forecastWindSpeed = doc.createNestedArray("forecastWindSpeed");
             JsonArray forecastWindDirection = doc.createNestedArray("forecastWindDirection");
             JsonArray forecastWindGust = doc.createNestedArray("forecastWindGust");
             JsonArray forecastTimes = doc.createNestedArray("forecastTimes");
-            
             for (int i = 0; i < 3; i++) {
-                forecastWindSpeed.add(String(weatherData.forecastWindSpeed[i], 1));
-                forecastWindDirection.add(String(weatherData.forecastWindDirection[i], 0));
-                forecastWindGust.add(String(weatherData.forecastWindGust[i], 1));
+                forecastWindSpeed.add(r1(weatherData.forecastWindSpeed[i]));
+                forecastWindDirection.add(r1(weatherData.forecastWindDirection[i]));
+                forecastWindGust.add(r1(weatherData.forecastWindGust[i]));
                 forecastTimes.add(weatherData.forecastTimes[i]);
             }
-            
+
             doc["weatherLastUpdate"] = weatherData.lastUpdateTime;
             doc["weatherError"] = "";
         } else {
@@ -808,21 +860,102 @@ void WebServerManager::setupAPIRoutes() {
             doc["weatherError"] = weatherPoller.getLastError();
         }
 
-        // Wind safety data (add to the existing JSON document in /variable route)
+        // Wind safety data (in-memory via mutex)
         auto windSafetyData = weatherPoller.getWindSafetyData();
         WindStowState windStowState = msc.getWindStowState();
-        doc["windStowActive"] = String(windStowState.active ? "YES" : "NO");
+        doc["windStowActive"] = windStowState.active ? "YES" : "NO";
         doc["windStowReason"] = windStowState.reason;
-        doc["stowDirection"] = String(windSafetyData.currentStowDirection, 1);
-        doc["windTrackingActive"] = String(msc.isWindTrackingActive() ? "YES" : "NO");
+        doc["stowDirection"] = r1(windSafetyData.currentStowDirection);
+        doc["windTrackingActive"] = msc.isWindTrackingActive() ? "YES" : "NO";
         doc["windTrackingStatus"] = msc.getWindTrackingStatus();
-        doc["windSafetyEnabled"] = String(weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF");
-        doc["windBasedHomeEnabled"] = String(weatherPoller.isWindBasedHomeEnabled() ? "ON" : "OFF");
-        doc["windSpeedThreshold"] = String(weatherPoller.getWindSpeedThreshold(), 1);
-        doc["windGustThreshold"] = String(weatherPoller.getWindGustThreshold(), 1);
-        doc["emergencyStowActive"] = String(windSafetyData.emergencyStowActive ? "YES" : "NO");
+        doc["emergencyStowActive"] = windSafetyData.emergencyStowActive ? "YES" : "NO";
+        doc["smoothTrackingActive"] = msc.isSmoothTrackingEnabled() ? "ON" : "OFF";
+        if (msc.isSmoothTrackingEnabled()) {
+            doc["kalmanAzPos"] = r2(msc.getKalmanAzPos());
+            doc["kalmanElPos"] = r2(msc.getKalmanElPos());
+            doc["kalmanAzVel"] = r2(msc.getKalmanAzVel());
+            doc["kalmanElVel"] = r2(msc.getKalmanElVel());
+        }
 
+        size_t jsonLen = measureJson(doc);
         String json;
+        json.reserve(jsonLen + 1);
+        serializeJson(doc, json);
+        server->send(200, "application/json", json);
+    });
+
+    // Configuration endpoint - fetched once on page load and after settings changes
+    server->on("/config", HTTP_GET, [this]() {
+        static DynamicJsonDocument doc(6144);
+        doc.clear();
+
+        // Network configuration (NVS reads)
+        doc["http_port"] = preferences.getInt("http_port", 80);
+        doc["rotctl_port"] = preferences.getInt("rotctl_port", 4533);
+        doc["hostname"] = preferences.getString("hostname", "discoverydrive");
+        doc["wifissid"] = preferences.getString("wifi_ssid", "discoverydish_HOTSPOT");
+
+        // Authentication (NVS reads)
+        doc["loginUser"] = preferences.getString("loginUser", "");
+        bool hasAuth = (preferences.getString("loginUser", "").length() != 0 &&
+                        preferences.getString("loginPassword", "").length() != 0 &&
+                        _loginRequired);
+        doc["passwordStatus"] = hasAuth ? "True" : "False";
+
+        // Motor speed configuration
+        doc["maxDualMotorAzSpeed"] = msc.convertSpeedToPercentage((float)msc.max_dual_motor_az_speed, msc.MIN_AZ_SPEED);
+        doc["maxDualMotorElSpeed"] = msc.convertSpeedToPercentage((float)msc.max_dual_motor_el_speed, msc.MIN_EL_SPEED);
+        doc["maxSingleMotorAzSpeed"] = msc.convertSpeedToPercentage((float)msc.max_single_motor_az_speed, msc.MIN_AZ_SPEED);
+        doc["maxSingleMotorElSpeed"] = msc.convertSpeedToPercentage((float)msc.max_single_motor_el_speed, msc.MIN_EL_SPEED);
+
+        // Stellarium configuration (NVS reads)
+        doc["stellariumPollingOn"] = preferences.getBool("stellariumOn", false) ? "ON" : "OFF";
+        doc["stellariumServerIPText"] = preferences.getString("stelServIP", "NO IP SET");
+        doc["stellariumServerPortText"] = preferences.getString("stelServPort", "8090");
+
+        // Motor tuning parameters (in-memory)
+        doc["toleranceAz"] = r2(msc.getMinAzTolerance());
+        doc["toleranceEl"] = r2(msc.getMinElTolerance());
+        doc["P_el"] = msc.getPEl();
+        doc["P_az"] = msc.getPAz();
+        doc["MIN_EL_SPEED"] = msc.getMinElSpeed();
+        doc["MIN_AZ_SPEED"] = msc.getMinAzSpeed();
+        doc["MIN_AZ_TOLERANCE"] = r2(msc.getMinAzTolerance());
+        doc["MIN_EL_TOLERANCE"] = r2(msc.getMinElTolerance());
+        doc["MAX_FAULT_POWER_AZ"] = msc.getMaxPowerFaultAz();
+        doc["MAX_FAULT_POWER_EL"] = msc.getMaxPowerFaultEl();
+        doc["MAX_FAULT_POWER_TOTAL"] = msc.getMaxPowerFaultTotal();
+        doc["MIN_VOLTAGE_THRESHOLD"] = msc.getMinVoltageThreshold();
+        doc["I_el"] = r2(msc.getIEl());
+        doc["I_az"] = r2(msc.getIAz());
+        doc["D_el"] = r2(msc.getDEl());
+        doc["D_az"] = r2(msc.getDAz());
+        doc["azOffset"] = r3(msc.getAzOffset());
+        doc["elOffset"] = r3(msc.getElOffset());
+        doc["autoHomeEnabled"] = msc.isAutoHomeEnabled() ? "ON" : "OFF";
+        doc["autoHomeMins"] = msc.getAutoHomeTimeout();
+        doc["smoothTrackingEnabled"] = msc.isSmoothTrackingEnabled() ? "ON" : "OFF";
+        doc["smKalQ"] = r2(msc.getKalmanQ());
+        doc["smKalR"] = r2(msc.getKalmanR());
+        doc["smMinAzSpd"] = msc.getMinSmoothAzSpeed();
+        doc["smMinElSpd"] = msc.getMinSmoothElSpeed();
+
+        // Weather configuration
+        doc["weatherEnabled"] = weatherPoller.isPollingEnabled() ? "ON" : "OFF";
+        doc["weatherApiKeyConfigured"] = weatherPoller.isApiKeyConfigured() ? "YES" : "NO";
+        doc["weatherLocationConfigured"] = weatherPoller.isLocationConfigured() ? "YES" : "NO";
+        doc["weatherLatitude"] = weatherPoller.getLatitude();
+        doc["weatherLongitude"] = weatherPoller.getLongitude();
+
+        // Wind safety configuration
+        doc["windSafetyEnabled"] = weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF";
+        doc["windBasedHomeEnabled"] = weatherPoller.isWindBasedHomeEnabled() ? "ON" : "OFF";
+        doc["windSpeedThreshold"] = r1(weatherPoller.getWindSpeedThreshold());
+        doc["windGustThreshold"] = r1(weatherPoller.getWindGustThreshold());
+
+        size_t jsonLen = measureJson(doc);
+        String json;
+        json.reserve(jsonLen + 1);
         serializeJson(doc, json);
         server->send(200, "application/json", json);
     });
@@ -1123,9 +1256,9 @@ void WebServerManager::handleFirmwareUpload() {
         updateStarted = false;
         totalSize = 0;
 
-        if (!upload.filename.endsWith(".bin")) {
-            _logger.error("Invalid firmware file type");
-            _firmwareUpdateError = "Invalid file type. Please upload a .bin file.";
+        if (upload.filename != "discovery_drive.ino.bin") {
+            _logger.error("Invalid firmware filename: " + upload.filename);
+            _firmwareUpdateError = "Invalid filename. Please upload discovery_drive.ino.bin";
             return;
         }
 
@@ -1215,16 +1348,11 @@ bool WebServerManager::updateFirmware(uint8_t* firmwareData, size_t firmwareSize
 
 bool WebServerManager::isValidUpdateFile(const String& filename) {
     if (filename.length() == 0) return false;
-    
-    String lowercaseFilename = filename;
-    lowercaseFilename.toLowerCase();
-    
-    return lowercaseFilename.endsWith(".html") || 
-           lowercaseFilename.endsWith(".css") || 
-           lowercaseFilename.endsWith(".js") || 
-           lowercaseFilename.endsWith(".png") || 
-           lowercaseFilename.endsWith(".jpg") || 
-           lowercaseFilename.endsWith(".jpeg");
+
+    return filename == "index.html" ||
+           filename == "script.js" ||
+           filename == "styles.css" ||
+           filename == "Logo-Circle-Cream.png";
 }
 
 void WebServerManager::sendOTAResponse(const String& message, bool success) {
@@ -1307,7 +1435,7 @@ String WebServerManager::createRestartResponse(const String& title, const String
 }
 
 void WebServerManager::handleStaticFile(const String& filePath, const String& contentType) {
-    if (xSemaphoreTake(_fileMutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(_fileMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         File file = LittleFS.open(filePath, "r");
         if (file) {
             server->streamFile(file, contentType);
@@ -1320,7 +1448,7 @@ void WebServerManager::handleStaticFile(const String& filePath, const String& co
 }
 
 String WebServerManager::loadIndexHTML() {
-    if (xSemaphoreTake(_fileMutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(_fileMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         File file = LittleFS.open("/index.html", "r");
         if (!file) {
             xSemaphoreGive(_fileMutex);
@@ -1347,7 +1475,7 @@ String WebServerManager::loadIndexHTML() {
 }
 
 void WebServerManager::verifyUploadedFile(const String& filename, size_t expectedSize) {
-    if (xSemaphoreTake(_fileMutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(_fileMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         File verifyFile = LittleFS.open("/" + filename, "r");
         if (verifyFile) {
             size_t fileSize = verifyFile.size();
@@ -1390,7 +1518,7 @@ String WebServerManager::generateOTAUploadHTML() {
     // Firmware Update Section
     html += "<div class='upload-section'>";
     html += "<h2>Firmware Update</h2>";
-    html += "<p>Upload a .bin file to update the ESP32 firmware</p>";
+    html += "<p>Upload discovery_drive.ino.bin to update the ESP32 firmware</p>";
     html += "<div class='warning'>Device will restart after firmware update</div>";
     html += "<div class='upload-box'>";
     html += "<form id='firmwareForm' onsubmit='return uploadFile(\"firmwareForm\", \"/firmware\", false);'>";
@@ -1403,10 +1531,10 @@ String WebServerManager::generateOTAUploadHTML() {
     html += "<div class='upload-section'>";
     html += "<h2>Web Assets Update</h2>";
     html += "<p>Upload individual files to update web interface</p>";
-    html += "<p><strong>Supported:</strong> .html, .css, .js, .png, .jpg, .jpeg</p>";
+    html += "<p><strong>Allowed files:</strong> index.html, script.js, styles.css, Logo-Circle-Cream.png</p>";
     html += "<div class='upload-box'>";
     html += "<form id='fileForm' onsubmit='return uploadFile(\"fileForm\", \"/fileupdate\", true);'>";
-    html += "<input type='file' name='webfile' accept='.html,.css,.js,.png,.jpg,.jpeg' required>";
+    html += "<input type='file' name='webfile' accept='.html,.css,.js,.png' required>";
     html += generateProgressBarHTML();
     html += "<br><button type='submit'>Upload File</button>";
     html += "</form></div></div>";
@@ -1440,6 +1568,19 @@ String WebServerManager::generateUploadJavaScript() {
            "  if (file.size > maxSize) {"
            "    alert('File too large. Maximum size is 3MB.');"
            "    return false;"
+           "  }"
+           "  "
+           "  if (isRegular) {"
+           "    var allowed = ['index.html','script.js','styles.css','Logo-Circle-Cream.png'];"
+           "    if (allowed.indexOf(file.name) === -1) {"
+           "      alert('Invalid filename: ' + file.name + '. Allowed: ' + allowed.join(', '));"
+           "      return false;"
+           "    }"
+           "  } else {"
+           "    if (file.name !== 'discovery_drive.ino.bin') {"
+           "      alert('Invalid filename: ' + file.name + '. Please upload discovery_drive.ino.bin');"
+           "      return false;"
+           "    }"
            "  }"
            "  "
            "  progressContainer.style.display = 'block';"
@@ -1513,7 +1654,7 @@ String WebServerManager::generateProgressBarHTML() {
 
 String WebServerManager::getLoginUser() {
     String result = "";
-    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, portMAX_DELAY) == pdTRUE) {
+    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _loginUser;
         xSemaphoreGive(_loginUserMutex);
     }
@@ -1521,7 +1662,7 @@ String WebServerManager::getLoginUser() {
 }
 
 void WebServerManager::setLoginUser(String loginUser) {
-    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, portMAX_DELAY) == pdTRUE) {
+    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _loginUser = loginUser;
         xSemaphoreGive(_loginUserMutex);
     }
@@ -1529,7 +1670,7 @@ void WebServerManager::setLoginUser(String loginUser) {
 
 String WebServerManager::getLoginPassword() {
     String result = "";
-    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, portMAX_DELAY) == pdTRUE) {
+    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _loginPassword;
         xSemaphoreGive(_loginUserMutex);
     }
@@ -1537,7 +1678,7 @@ String WebServerManager::getLoginPassword() {
 }
 
 void WebServerManager::setLoginPassword(String loginPassword) {
-    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, portMAX_DELAY) == pdTRUE) {
+    if (_loginUserMutex != NULL && xSemaphoreTake(_loginUserMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _loginPassword = loginPassword;
         xSemaphoreGive(_loginUserMutex);
     }

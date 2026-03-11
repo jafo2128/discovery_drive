@@ -67,12 +67,18 @@ private:
     String wifi_ssid;
     String wifi_password;
     
+    // Roaming configuration
+    static constexpr int32_t ROAMING_RSSI_THRESHOLD = -75;       // dBm — trigger roaming scan below this
+    static constexpr unsigned long ROAMING_COOLDOWN_MS = 30000;   // 30s between roaming attempts
+    unsigned long _lastRoamingAttemptMs = 0;
+
     // Access Point configuration
     const char* _ap_ssid = "discoverydrive_HOTSPOT";
     const char* _ap_password = "discoverydrive";
     
     // Network configuration
     String _hostname = "discoverydrive";
+    int _httpPort = 80;
     
     // ESP-IDF network interface
     esp_netif_t* sta_netif = NULL;

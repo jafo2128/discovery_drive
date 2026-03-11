@@ -78,35 +78,48 @@ void INA219Manager::begin() {
 // CORE FUNCTIONALITY
 // =============================================================================
 
+void INA219Manager::setI2CMutex(SemaphoreHandle_t mutex) {
+    _i2cMutex = mutex;
+}
+
 void INA219Manager::ReadData() {
     if (powerMutex == NULL || !_sensorAvailable) {
         return;  // Sensor not initialized
     }
 
-    if (xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
-        // Read raw sensor values atomically
-        float shuntvoltage = _ina219.getShuntVoltage_mV();
-        float busvoltage = _ina219.getBusVoltage_V();
-        
-        // Check for I2C read failures (NaN or unreasonable values)
-        if (isnan(shuntvoltage) || isnan(busvoltage)) {
-            xSemaphoreGive(powerMutex);  // FIXED: Release mutex before returning
-            return;
-        }
-        
+    // Take I2C bus mutex first (shared with motor controller)
+    if (_i2cMutex != NULL && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return;  // I2C bus busy, skip this reading
+    }
+
+    // Read raw sensor values while holding I2C mutex
+    float shuntvoltage = _ina219.getShuntVoltage_mV();
+    float busvoltage = _ina219.getBusVoltage_V();
+
+    // Release I2C mutex immediately after bus operations
+    if (_i2cMutex != NULL) {
+        xSemaphoreGive(_i2cMutex);
+    }
+
+    // Check for I2C read failures (NaN or unreasonable values)
+    if (isnan(shuntvoltage) || isnan(busvoltage)) {
+        return;
+    }
+
+    if (xSemaphoreTake(powerMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         // Calculate raw values
         float rawLoadVoltage = busvoltage + (shuntvoltage / 1000);
         float rawCurrent = shuntvoltage / SHUNT_RESISTANCE_OHMS; // Convert to mA
-        
+
         // Update averaging for both voltage and current
         updateVoltageAverage(rawLoadVoltage);
         updateCurrentAverage(rawCurrent);
-        
+
         // Store averaged values
         _current_mA = _averagedCurrent;
         _loadvoltage = _averagedVoltage;
         _power = _loadvoltage * (_current_mA / 1000);
-        
+
         xSemaphoreGive(powerMutex);
     }
 }
@@ -187,7 +200,7 @@ float INA219Manager::calculateCurrentAverage() {
 
 float INA219Manager::getCurrent() {
     float result = 0;
-    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _current_mA;
         xSemaphoreGive(powerMutex);
     }
@@ -196,7 +209,7 @@ float INA219Manager::getCurrent() {
 
 float INA219Manager::getLoadVoltage() {
     float result = 0;
-    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _loadvoltage;
         xSemaphoreGive(powerMutex);
     }
@@ -205,7 +218,7 @@ float INA219Manager::getLoadVoltage() {
 
 float INA219Manager::getPower() {
     float result = 0;
-    if (powerMutex != NULL && xSemaphoreTake(powerMutex, portMAX_DELAY) == pdTRUE) {
+    if (powerMutex != NULL && xSemaphoreTake(powerMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _power;
         xSemaphoreGive(powerMutex);
     }

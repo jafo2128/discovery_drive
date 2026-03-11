@@ -105,6 +105,14 @@ button:hover, input[type="submit"]:hover {
   background-color: #45a049;
 }
 
+.stop-btn {
+  background-color: #d32f2f;
+}
+
+.stop-btn:hover {
+  background-color: #b71c1c;
+}
+
 /* Center buttons and switches in a flexbox */
 .button-container, .switch-container {
   display: flex;
@@ -112,6 +120,14 @@ button:hover, input[type="submit"]:hover {
   align-items: center;
   flex-wrap: wrap;
   margin-top: 20px;
+}
+
+/* Compact nudge buttons */
+.nudge-btn {
+  padding: 8px 12px;
+  font-size: 0.9em;
+  margin: 4px;
+  min-width: 50px;
 }
 
 /* Style switch */
@@ -412,6 +428,13 @@ th {
   border-color: #ffc107;
   box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.25);
 }
+
+/* Utility classes (replacing inline styles from HTML) */
+.hidden{display:none}
+.error-text{color:red}
+.alert-box{color:red;font-weight:bold;margin:10px 0;display:none}
+.danger-btn{background-color:#dc3545}
+.danger-btn:hover{background-color:#c82333}
 
 /* Mobile responsiveness */
 @media only screen and (max-width: 1200px) {

@@ -99,7 +99,7 @@ bool Logger::getSerialOutputDisabled() {
 
 String Logger::getNewLogMessages() {
     String result;
-    if (_logMessagesMutex != NULL && xSemaphoreTake(_logMessagesMutex, portMAX_DELAY) == pdTRUE) {
+    if (_logMessagesMutex != NULL && xSemaphoreTake(_logMessagesMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = std::move(_newMessages);  // Move instead of copy
         _newMessages = "";  // Ensure it's in a valid empty state
         xSemaphoreGive(_logMessagesMutex);
@@ -112,25 +112,25 @@ void Logger::addToWebLog(const String& message) {
         return;
     }
     
-    if (xSemaphoreTake(_logMessagesMutex, portMAX_DELAY) == pdTRUE) {
-        // Add timestamp to message
-        String timestampedMessage = "[" + String(millis()) + "] " + message;
-        
-        // Append to new messages buffer
+    if (xSemaphoreTake(_logMessagesMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // Append directly to buffer — avoids temporary String allocation
         if (_newMessages.length() > 0) {
-            _newMessages += "\n";
+            _newMessages += '\n';
         }
-        _newMessages += timestampedMessage;
-        
+        _newMessages += '[';
+        _newMessages += millis();
+        _newMessages += "] ";
+        _newMessages += message;
+
         // Maintain reasonable buffer size
         manageBufferSize();
-        
+
         xSemaphoreGive(_logMessagesMutex);
     }
 }
 
 void Logger::manageBufferSize() {
-    const size_t MAX_BUFFER_SIZE = 10000;
+    const size_t MAX_BUFFER_SIZE = 4000;
     
     if (_newMessages.length() > MAX_BUFFER_SIZE) {
         int splitPos = _newMessages.indexOf('\n', _newMessages.length() / 2);

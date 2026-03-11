@@ -34,6 +34,9 @@ public:
     void begin();
     void ReadData();
 
+    // I2C bus mutex (shared with MotorSensorController to prevent bus contention)
+    void setI2CMutex(SemaphoreHandle_t mutex);
+
     // Data access methods
     float getCurrent();
     float getLoadVoltage();
@@ -50,6 +53,7 @@ private:
 
     // Thread synchronization
     SemaphoreHandle_t powerMutex = NULL;
+    SemaphoreHandle_t _i2cMutex = NULL;  // Shared I2C bus mutex (set via setI2CMutex)
 
     std::atomic<bool> _sensorAvailable{false};
 

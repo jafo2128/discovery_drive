@@ -32,14 +32,8 @@ WiFiManager::WiFiManager(Preferences& prefs, Logger& logger) : _preferences(pref
 // Core functionality methods
 void WiFiManager::begin() {
     _hostname = _preferences.getString("hostname", "discoverydrive");
+    _httpPort = _preferences.getInt("http_port", 80);
     connectToWiFi();
-
-    if (MDNS.begin(_hostname)) {
-        _logger.info("MDNS responder started");
-        _logger.info("Access the ESP32 at: http://" + String(_hostname) + ".local");
-    }
-
-    MDNS.addService("http", "tcp", _preferences.getInt("http_port", 80));
 }
 
 void WiFiManager::connectToWiFi() {
@@ -102,7 +96,19 @@ void WiFiManager::connectToWiFi() {
         
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
         ESP_ERROR_CHECK(esp_wifi_start());
-        
+
+        // Increase beacon timeout for mesh network compatibility (default 6s)
+        // Google Mesh/Nest WiFi aggressively steers clients between nodes,
+        // which can cause brief beacon gaps that trigger reason-200 disconnects.
+        // 10s is a compromise: short enough to detect a dead node reasonably fast,
+        // long enough to tolerate normal mesh steering gaps.
+        ESP_ERROR_CHECK(esp_wifi_set_inactive_time(WIFI_IF_STA, 10));
+
+        // Enable proactive roaming: ESP-IDF fires WIFI_EVENT_STA_BSS_RSSI_LOW
+        // when signal drops below this threshold, letting us scan for a better AP
+        // before the current one becomes unreachable
+        esp_wifi_set_rssi_threshold(ROAMING_RSSI_THRESHOLD);
+
         // Optimize WiFi performance
         ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20));
         ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(84));
@@ -241,20 +247,37 @@ void WiFiManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int
                 break;
             }
             
+            case WIFI_EVENT_STA_BSS_RSSI_LOW: {
+                unsigned long now = millis();
+                if (now - inst->_lastRoamingAttemptMs > ROAMING_COOLDOWN_MS) {
+                    inst->_lastRoamingAttemptMs = now;
+                    inst->_logger.warn("Low RSSI (below " + String(ROAMING_RSSI_THRESHOLD) +
+                                       " dBm) — disconnecting to scan for better AP");
+                    esp_wifi_disconnect();  // triggers DISCONNECTED event which reconnects to strongest AP
+                } else {
+                    inst->_logger.debug("Low RSSI detected but roaming cooldown active");
+                }
+                break;
+            }
+
             case WIFI_EVENT_STA_DISCONNECTED: {
                 wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*)event_data;
-                inst->_logger.error("WiFi disconnected. Reason: " + String(event->reason));
+                uint8_t reason = event->reason;
+                inst->_logger.error("WiFi disconnected. Reason: " + String(reason));
 
-                // Handle roaming disconnections specially
-                if (event->reason == 8) {  // WIFI_REASON_ASSOC_LEAVE
-                    inst->_logger.error("Disconnection due to roaming or AP request. Waiting before reconnecting...");
-                    delay(500);
-                    break;
+                // Roaming-related reasons — the ESP-IDF 802.11k/v/r stack is
+                // transitioning to a new AP.  Don't mark WiFi as down; just
+                // trigger reconnect as a safety net.
+                bool isRoaming = (reason == WIFI_REASON_ASSOC_LEAVE  // 8
+                               || reason == 200);                          // ROAMING
+
+                if (isRoaming) {
+                    inst->_logger.info("Roaming event (reason " + String(reason) + ") — reconnecting to best AP");
+                } else {
+                    inst->wifiConnected = false;
                 }
-                
-                inst->wifiConnected = false;
-                
-                // Attempt reconnection
+
+                // Attempt reconnection (safe even during roaming)
                 esp_err_t result = esp_wifi_connect();
                 if (result != ESP_OK && result != ESP_ERR_WIFI_CONN) {
                     inst->_logger.error("WiFi reconnect failed: " + String(result));
@@ -266,8 +289,17 @@ void WiFiManager::wifi_event_handler(void* arg, esp_event_base_t event_base, int
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         inst->_logger.info("Got IP: " + IPAddress(event->ip_info.ip.addr).toString());
-        
+
         inst->ip_addr = IPAddress(event->ip_info.ip.addr).toString();
         inst->wifiConnected = true;
+
+        // (Re)start mDNS every time we get an IP
+        MDNS.end();
+        if (MDNS.begin(inst->_hostname)) {
+            inst->_logger.info("mDNS responder started: http://" + inst->_hostname + ".local");
+            MDNS.addService("http", "tcp", inst->_httpPort);
+        } else {
+            inst->_logger.error("mDNS failed to start");
+        }
     }
 }

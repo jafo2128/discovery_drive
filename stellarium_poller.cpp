@@ -120,16 +120,17 @@ bool StellariumPoller::processApiResponse(const String& payload) {
         az += 360.0;
     }
 
-    // Validate and clean up elevation
+    // Validate and clean up elevation (respect extended elevation mode)
     if (isnan(el)) el = 0;
-    if (el < 0) el = 0;
+    float minEl = _motorSensorCtrl.isExtendedElEnabled() ? -90.0f : 0.0f;
+    if (el < minEl) el = minEl;
     if (el > 90) el = 90;
 
     // Update motor controller setpoints
     _motorSensorCtrl.setSetPointAz(az);
     _motorSensorCtrl.setSetPointEl(el);
 
-    _logger.info("Stellarium target - Az: " + String(az, 2) + "°, El: " + String(el, 2) + "°");
+    _logger.debug("Stellarium target - Az: " + String(az, 2) + "°, El: " + String(el, 2) + "°");
     
     return true;
 }

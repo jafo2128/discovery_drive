@@ -43,16 +43,30 @@ MotorSensorController::MotorSensorController(Preferences& prefs, INA219Manager& 
 void MotorSensorController::begin() {
     // Load configuration parameters from preferences
     P_el = _preferences.getInt("P_el", 100);
-    P_az = _preferences.getInt("P_az", 5);
+    P_az = _preferences.getInt("P_az", 10);
     MIN_EL_SPEED = _preferences.getInt("MIN_EL_SPEED", 50);
     MIN_AZ_SPEED = _preferences.getInt("MIN_AZ_SPEED", 100);
-    _MIN_AZ_TOLERANCE = _preferences.getFloat("MIN_AZ_TOL", 1.5);
+    _MIN_AZ_TOLERANCE = _preferences.getFloat("MIN_AZ_TOL", 0.1);
     _MIN_EL_TOLERANCE = _preferences.getFloat("MIN_EL_TOL", 0.1);
-    _maxPowerBeforeFault = _preferences.getInt("MAX_POWER", 10);
+    _maxPowerFaultAz = _preferences.getInt("MAX_PWR_AZ", 8);
+    _maxPowerFaultEl = _preferences.getInt("MAX_PWR_EL", 7);
+    _maxPowerFaultTotal = _preferences.getInt("MAX_PWR_TOT", 10);
     _minVoltageThreshold = _preferences.getInt("MIN_VOLTAGE", 6);
+    I_el = _preferences.getFloat("I_el", 0.0f);
+    I_az = _preferences.getFloat("I_az", 0.0f);
+    D_el = _preferences.getFloat("D_el", 0.0f);
+    D_az = _preferences.getFloat("D_az", 25.0f);
     _az_offset = _preferences.getFloat("az_offset", 0.0);
     _el_offset = _preferences.getFloat("el_offset", 0.0);
-
+    _directionLockEnabled = _preferences.getBool("dirLock", true);
+    _extendedElEnabled = _preferences.getBool("extendedEl", false);
+    _autoHomeEnabled = _preferences.getBool("autoHome", false);
+    _autoHomeTimeoutMs = _preferences.getInt("autoHomeMins", 3) * 60000UL;
+    _smoothTrackingEnabled = _preferences.getBool("smoothTrack", false);
+    _kalmanQ = _preferences.getFloat("smKalQ", 1.0f);
+    _kalmanR = _preferences.getFloat("smKalR", 1.0f);
+    MIN_SMOOTH_AZ_SPEED = _preferences.getInt("smMinAzSpd", 220);
+    MIN_SMOOTH_EL_SPEED = _preferences.getInt("smMinElSpd", 220);
     _logger.info("Angle offsets loaded - AZ: " + String(_az_offset, 3) + "°, EL: " + String(_el_offset, 3) + "°");
 
     // Configure motor control pins
@@ -64,6 +78,10 @@ void MotorSensorController::begin() {
     digitalWrite(_ccw_pin_az, 0);
     pinMode(_ccw_pin_el, OUTPUT);
     digitalWrite(_ccw_pin_el, 0);
+
+    // Set PWM Frequency
+    analogWriteFrequency(_pwm_pin_az, FREQ);
+    analogWriteFrequency(_pwm_pin_el, FREQ);
 
     // Load motor speed settings
     max_dual_motor_az_speed = _preferences.getInt("maxDMAzSpeed", MAX_AZ_SPEED);
@@ -96,14 +114,22 @@ void MotorSensorController::begin() {
         magnetFault = true;
     }
 
-    // Initialize azimuth positioning
-    float degAngleAz = getAvgAngle(_az_hall_i2c_addr);
+    // Initialize azimuth positioning — run EMA filter multiple times to settle
+    float degAngleAz = 0;
+    for (int i = 0; i < _numAvg; i++) {
+        degAngleAz = readFilteredAngle(_az_hall_i2c_addr, _az);
+        delayMicroseconds(100);
+    }
     _az_startAngle = 10; // Avoid 0 to prevent backlash switching between 0 and 359
     setCorrectedAngleAz(correctAngle(getAdjustedAzStartAngle(), degAngleAz));
     needs_unwind = _preferences.getInt("needs_unwind", 0);
 
-    // Initialize elevation positioning
-    float degAngleEl = getAvgAngle(_el_hall_i2c_addr);
+    // Initialize elevation positioning — run EMA filter multiple times to settle
+    float degAngleEl = 0;
+    for (int i = 0; i < _numAvg; i++) {
+        degAngleEl = readFilteredAngle(_el_hall_i2c_addr, _el);
+        delayMicroseconds(100);
+    }
     setElStartAngle(_preferences.getFloat("el_cal", degAngleEl));
 
     _logger.info("EL START ANGLE: " + String(getElStartAngle()));
@@ -112,9 +138,32 @@ void MotorSensorController::begin() {
     // Set home position
     setSetPointAzInternal(0);
     setSetPointElInternal(0);
-    
+
     // Initialize manual setpoint time
     _lastManualSetpointTime = millis();
+
+    // Initialize per-axis configs
+    _azCfg = { _pwm_pin_az, _ccw_pin_az, _az_hall_i2c_addr,
+               &P_az, &I_az, &D_az, &MIN_AZ_SPEED, &_MIN_AZ_TOLERANCE,
+               EMERGENCY_STOW_P_AZ, /*isAzimuth=*/true, /*invertDir=*/false };
+    _elCfg = { _pwm_pin_el, _ccw_pin_el, _el_hall_i2c_addr,
+               &P_el, &I_el, &D_el, &MIN_EL_SPEED, &_MIN_EL_TOLERANCE,
+               EMERGENCY_STOW_P_EL, /*isAzimuth=*/false, /*invertDir=*/false };
+
+    // Wire AxisState pointers to existing class-level members
+    _az.setPointState   = &setPointState_az;
+    _az.isMotorLatched  = &_isAzMotorLatched;
+    _az.i2cErrorFlag    = &i2cErrorFlag_az;
+    _az.setpoint        = &_setpoint_az;
+    _az.error           = &_error_az;
+    _az.correctedAngle  = &_correctedAngle_az;
+
+    _el.setPointState   = &setPointState_el;
+    _el.isMotorLatched  = &_isElMotorLatched;
+    _el.i2cErrorFlag    = &i2cErrorFlag_el;
+    _el.setpoint        = &_setpoint_el;
+    _el.error           = &_error_el;
+    _el.correctedAngle  = &_correctedAngle_el;
 }
 
 // =============================================================================
@@ -126,20 +175,58 @@ void MotorSensorController::setWeatherPoller(WeatherPoller* weatherPoller) {
     _logger.info("Weather poller integration enabled");
 }
 
+void MotorSensorController::setI2CMutex(SemaphoreHandle_t mutex) {
+    _i2cMutex = mutex;
+}
+
 // =============================================================================
 // MAIN CONTROL LOOPS
 // =============================================================================
 
 void MotorSensorController::runControlLoop() {
+    // Measure real elapsed time for PID calculations
+    unsigned long now = millis();
+    float dt = PID_DT_DEFAULT;
+    if (_lastControlLoopTime > 0) {
+        dt = (now - _lastControlLoopTime) / 1000.0f;
+        if (dt <= 0.0f) dt = PID_DT_DEFAULT;
+        if (dt > PID_DT_MAX) dt = PID_DT_MAX;
+    }
+    _lastControlLoopTime = now;
+
     // Update wind stow status first
     updateWindStowStatus();
-    
+
     // Update wind tracking status
     updateWindTrackingStatus();
-    
+
+    // Check auto-home after idle timeout
+    checkAutoHome();
+
+    // Read and process azimuth angle (single read + EMA filter)
+    float degAngleAz = readFilteredAngle(_az_hall_i2c_addr, _az);
+    setCorrectedAngleAz(correctAngle(getAdjustedAzStartAngle(), degAngleAz));
+
+    if (!calMode) {
+        calcIfNeedsUnwind(getCorrectedAngleAz());
+    }
+
+    // Read and process elevation angle (single read + EMA filter)
+    float degAngleEl = readFilteredAngle(_el_hall_i2c_addr, _el);
+    setCorrectedAngleEl(correctAngle(getAdjustedElStartAngle(), degAngleEl));
+
     // Get current setpoints and update flags
     float current_setpoint_az = getSetPointAz();
-    float current_setpoint_el = getSetPointEl();    
+    float current_setpoint_el = getSetPointEl();
+
+    // During force stop, keep motors halted and preserve update flags for when it expires
+    unsigned long stopUntil = _forceStopUntil.load();
+    if (stopUntil > 0 && millis() < stopUntil) {
+        analogWrite(_pwm_pin_az, 255);
+        analogWrite(_pwm_pin_el, 255);
+        return;
+    }
+
     bool setPointAzUpdated = _setPointAzUpdated;
     bool setPointElUpdated = _setPointElUpdated;
 
@@ -147,44 +234,81 @@ void MotorSensorController::runControlLoop() {
     if (_setPointAzUpdated) _setPointAzUpdated = false;
     if (_setPointElUpdated) _setPointElUpdated = false;
 
-    // Read and process azimuth angle
-    float degAngleAz = getAvgAngle(_az_hall_i2c_addr);
-    setCorrectedAngleAz(correctAngle(getAdjustedAzStartAngle(), degAngleAz));
-    
-    if (!calMode) {
-        calcIfNeedsUnwind(getCorrectedAngleAz());
-    }
-
-    // Read and process elevation angle
-    float degAngleEl = getAvgAngle(_el_hall_i2c_addr);
-    setCorrectedAngleEl(correctAngle(getAdjustedElStartAngle(), degAngleEl));
+    // Update direction lock tracking
+    updateDirectionLock(current_setpoint_az, current_setpoint_el,
+                        setPointAzUpdated, setPointElUpdated);
 
     // Calculate control errors
     angle_shortest_error_az(current_setpoint_az, getCorrectedAngleAz());
     angle_error_el(current_setpoint_el, getCorrectedAngleEl());
 
-    // Update error tracking for convergence safety
-    if (!calMode) {
-        updateErrorTracking();
-        //checkStall(); // TEMP DISABLE
-    }
-
-    // Execute control logic - but check for movement blocking first
-    if (!calMode) {
+    // Execute control logic
+    if (stopUntil > 0) _forceStopUntil = 0;
+    if (calMode) {
+        handleCalibrationMode();
+    } else if (_smoothTrackingEnabled.load() && !_windStowActive) {
+        // Smooth tracking: Kalman filter interpolates setpoint, P-controller drives motor
+        // Seed Kalman from current setpoints if not yet initialized
+        if (!_kalmanAz.initialized) kalmanUpdate(_kalmanAz, current_setpoint_az, true);
+        if (!_kalmanEl.initialized) kalmanUpdate(_kalmanEl, current_setpoint_el, false);
+        // Kalman predict every tick
+        kalmanPredict(_kalmanAz, dt, true);
+        kalmanPredict(_kalmanEl, dt, false);
+        // Kalman update when setpoint changes
+        if (setPointAzUpdated) kalmanUpdate(_kalmanAz, current_setpoint_az, true);
+        if (setPointElUpdated) kalmanUpdate(_kalmanEl, current_setpoint_el, false);
+        // Synthetic measurements: gently converge position back toward raw setpoint
+        // when no real updates are arriving (prevents overshoot drift)
+        float syntheticR = _kalmanR * KALMAN_SYNTHETIC_R_MULT;
+        unsigned long now = millis();
+        if (!setPointAzUpdated && _kalmanAz.lastUpdateMs > 0 &&
+            (now - _kalmanAz.lastUpdateMs) > KALMAN_VEL_DECAY_MS) {
+            kalmanUpdate(_kalmanAz, current_setpoint_az, true, syntheticR);
+        }
+        if (!setPointElUpdated && _kalmanEl.lastUpdateMs > 0 &&
+            (now - _kalmanEl.lastUpdateMs) > KALMAN_VEL_DECAY_MS) {
+            kalmanUpdate(_kalmanEl, current_setpoint_el, false, syntheticR);
+        }
+        // Recompute errors using Kalman-predicted position as the effective setpoint
+        angle_shortest_error_az(_kalmanAz.pos, getCorrectedAngleAz());
+        angle_error_el(_kalmanEl.pos, getCorrectedAngleEl());
+        // Tolerance check — stop motor when within tolerance of Kalman target
+        setPointState_az = (fabs(getErrorAz()) > _MIN_AZ_TOLERANCE);
+        setPointState_el = (fabs(getErrorEl()) > _MIN_EL_TOLERANCE);
+        // Direction lock override: keep motor active while tracking a moving target
+        if (_directionLockEnabled.load()) {
+            if (_az.dirLockDirection != 0) setPointState_az = true;
+            if (_el.dirLockDirection != 0) setPointState_el = true;
+        }
+        // Unlatch when Kalman prediction moves error back above tolerance
+        if (_isAzMotorLatched.load() && fabs(getErrorAz()) > _MIN_AZ_TOLERANCE) {
+            _isAzMotorLatched = false;
+            _az.prevError = 0;
+        }
+        if (_isElMotorLatched.load() && fabs(getErrorEl()) > _MIN_EL_TOLERANCE) {
+            _isElMotorLatched = false;
+            _el.prevError = 0;
+        }
+        // Latching (sign-flip overshoot detection)
+        updateLatch(_azCfg, _az, setPointAzUpdated);
+        updateLatch(_elCfg, _el, setPointElUpdated);
+        // Single motor mode priority and speed limits
+        updateMotorPriority(setPointAzUpdated, setPointElUpdated);
+        actuateMotor(_azCfg, _az, MIN_SMOOTH_AZ_SPEED, dt);
+        actuateMotor(_elCfg, _el, MIN_SMOOTH_EL_SPEED, dt);
+    } else {
         updateMotorControl(current_setpoint_az, current_setpoint_el, setPointAzUpdated, setPointElUpdated);
         updateMotorPriority(setPointAzUpdated, setPointElUpdated);
-                
-        actuate_motor_az(MIN_AZ_SPEED);
-        actuate_motor_el(MIN_EL_SPEED);
-    } else {
-        handleCalibrationMode();
+        actuateMotor(_azCfg, _az, MIN_AZ_SPEED, dt);
+        actuateMotor(_elCfg, _el, MIN_EL_SPEED, dt);
     }
 
     handleOscillationDetection();
 }
 
 void MotorSensorController::runSafetyLoop() {
-    String errorText = "";
+    String errorText;
+    errorText.reserve(256);
     bool hasNewErrors = false;
 
     // Check fault conditions
@@ -215,7 +339,7 @@ void MotorSensorController::runSafetyLoop() {
     // Check elevation bounds (if not in calibration mode)
     if (!calMode) {
         float currentEl = getCorrectedAngleEl();
-        if ((currentEl > 100 && currentEl < 350) || isnan(currentEl)) {
+        if ((currentEl > 100 && currentEl < (_extendedElEnabled ? 250 : 350)) || isnan(currentEl)) {
             outOfBoundsFault = true;
         }
 
@@ -243,12 +367,99 @@ void MotorSensorController::runSafetyLoop() {
     // Skip power and voltage checks during emergency wind stow
     if (!_windStowActive) {
         // Check power consumption (only when NOT in emergency wind stow)
+        // Must exceed threshold continuously for OVER_POWER_FAULT_MS before faulting
         float powerValue = ina219Manager.getPower();
-        if (powerValue > getMaxPowerBeforeFault()) overPowerFault = true;
+        int activePowerThreshold = getActivePowerThreshold();
+
+        if (_overPowerBackoff) {
+            // Axes are backing off before we throw the fault
+            bool azDone = !_overPowerBackoffAz || _isAzMotorLatched.load() || !setPointState_az.load();
+            bool elDone = !_overPowerBackoffEl || _isElMotorLatched.load() || !setPointState_el.load();
+            bool timedOut = (millis() - _overPowerBackoffStart >= OVER_POWER_BACKOFF_MS);
+
+            if ((azDone && elDone) || timedOut) {
+                if (timedOut) {
+                    _logger.warn("OVER POWER: Backoff timed out - faulting anyway");
+                } else {
+                    _logger.warn("OVER POWER: Backoff complete - now faulting");
+                }
+                _overPowerBackoff = false;
+                _overPowerBackoffAz = false;
+                _overPowerBackoffEl = false;
+                overPowerFault = true;
+            }
+        } else {
+            if (powerValue > activePowerThreshold) {
+                if (_overPowerStartTime == 0) {
+                    _overPowerStartTime = millis();
+                } else if (millis() - _overPowerStartTime >= OVER_POWER_FAULT_MS) {
+                    // Sustained over-power detected — capture which threshold was exceeded
+                    bool azActive = setPointState_az.load() && !_isAzMotorLatched.load() && !global_fault.load();
+                    bool elActive = setPointState_el.load() && !_isElMotorLatched.load() && !global_fault.load();
+                    _overPowerFaultValue = activePowerThreshold;
+                    if (azActive && elActive) _overPowerFaultLabel = "TOTAL";
+                    else if (azActive) _overPowerFaultLabel = "AZ";
+                    else if (elActive) _overPowerFaultLabel = "EL";
+                    else _overPowerFaultLabel = "TOTAL";
+
+                    // Back off each faulting axis by 20° opposite to its direction of travel
+                    float currentAz = getCorrectedAngleAz();
+                    float currentEl = getCorrectedAngleEl();
+                    double errorAz = getErrorAz();
+                    double errorEl = getErrorEl();
+                    _overPowerBackoff = true;
+                    _overPowerBackoffStart = millis();
+                    _overPowerBackoffAz = false;
+                    _overPowerBackoffEl = false;
+
+                    if (azActive) {
+                        float backoffAz = (errorAz >= 0)
+                            ? currentAz - OVER_POWER_BACKOFF_DEG
+                            : currentAz + OVER_POWER_BACKOFF_DEG;
+                        backoffAz = fmod(backoffAz, 360.0f);
+                        if (backoffAz < 0) backoffAz += 360.0f;
+                        setSetPointAzInternal(backoffAz);
+                        _overPowerBackoffAz = true;
+                        _logger.warn("OVER POWER: Backing off AZ " +
+                                     String(currentAz, 1) + "° -> " + String(backoffAz, 1) + "°");
+                    }
+
+                    if (elActive) {
+                        float backoffEl = (errorEl >= 0)
+                            ? currentEl - OVER_POWER_BACKOFF_DEG
+                            : currentEl + OVER_POWER_BACKOFF_DEG;
+                        float minEl = _extendedElEnabled ? -90.0f : 0.0f;
+                        backoffEl = constrain(backoffEl, minEl, 90.0f);
+                        setSetPointElInternal(backoffEl);
+                        _overPowerBackoffEl = true;
+                        _logger.warn("OVER POWER: Backing off EL " +
+                                     String(currentEl, 1) + "° -> " + String(backoffEl, 1) + "°");
+                    }
+
+                    // Stop non-backing-off axes immediately
+                    if (!_overPowerBackoffAz) {
+                        _isAzMotorLatched = true;
+                        setPWM(_pwm_pin_az, 255);
+                    }
+                    if (!_overPowerBackoffEl) {
+                        _isElMotorLatched = true;
+                        setPWM(_pwm_pin_el, 255);
+                    }
+
+                    _logger.warn("OVER POWER: " + String(_overPowerFaultLabel) +
+                                 " threshold (" + String(_overPowerFaultValue) +
+                                 "W) exceeded. Backing off before faulting.");
+                }
+            } else {
+                _overPowerStartTime = 0;
+            }
+        }
 
         if (overPowerFault) {
             global_fault = true;
-            errorText += "Power exceeded " + String(getMaxPowerBeforeFault()) + "W. Rotator may be stuck or jammed. Power: " + String(powerValue) + "W\n";
+            errorText += "Power exceeded " + String(_overPowerFaultLabel) + " threshold (" +
+                         String(_overPowerFaultValue) + "W) for over 1s. Rotator may be stuck or jammed. Power: " +
+                         String(powerValue) + "W\n";
             hasNewErrors = true;
         }
 
@@ -276,17 +487,6 @@ void MotorSensorController::runSafetyLoop() {
         // Reset power/voltage faults during emergency stow to allow movement
         overPowerFault = false;
         lowVoltageFault = false;
-    }
-
-    // Check error convergence safety (only when not in calibration mode or emergency stow)
-    if (!calMode && !_windStowActive) {
-        checkErrorConvergence();
-        
-        if (errorDivergenceFault) {
-            global_fault = true;
-            errorText += "MOTOR ERROR DIVERGENCE DETECTED. Errors are increasing instead of decreasing.\n";
-            hasNewErrors = true;
-        }
     }
 
     // Emergency stop on fault (except in calibration mode, wind stow mode, and wind tracking mode)
@@ -328,7 +528,7 @@ void MotorSensorController::updateWindStowStatus() {
 
 
 void MotorSensorController::setWindStowActive(bool active, const String& reason, float direction) {
-    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
+    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         bool wasActive = _windStowActive;
         
         _windStowActive = active;
@@ -358,17 +558,23 @@ void MotorSensorController::performWindStow() {
     if (!_windStowActive) {
         return;
     }
-    
-    // Set the dish to the wind-safe position (edge-on to wind)
-    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
-        float stowAz = _windStowDirection;
-        float stowEl = 0.0; // Lower elevation for wind safety
-        
-        // Override normal setpoints for wind stow (use internal methods to avoid manual tracking)
+
+    // Copy values out under mutex, then release BEFORE taking _setPointMutex
+    // (prevents nested mutex deadlock: _windStowMutex → _setPointMutex)
+    float stowAz = 0.0f;
+    float stowEl = 0.0f;
+    bool gotValues = false;
+
+    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        stowAz = _windStowDirection;
+        stowEl = 0.0f;
+        gotValues = true;
+        xSemaphoreGive(_windStowMutex);
+    }
+
+    if (gotValues) {
         setSetPointAzInternal(stowAz);
         setSetPointElInternal(stowEl);
-        
-        xSemaphoreGive(_windStowMutex);
     }
 }
 
@@ -380,7 +586,7 @@ bool MotorSensorController::isWindStowActive() {
 WindStowState MotorSensorController::getWindStowState() {
     WindStowState state = {false, "", 0.0};
     
-    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, portMAX_DELAY) == pdTRUE) {
+    if (_windStowMutex != NULL && xSemaphoreTake(_windStowMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         state.active = _windStowActive.load();
         state.reason = _windStowReason;
         state.direction = _windStowDirection;
@@ -454,7 +660,6 @@ bool MotorSensorController::shouldActivateWindTracking() {
     }
     
     if (!wp->isWindBasedHomeEnabled()) {
-        _logger.debug("Wind tracking blocked: Wind-based home not enabled in settings");
         return false;
     }
     
@@ -558,11 +763,178 @@ String MotorSensorController::getWindTrackingStatus() {
     return getWindTrackingState().status;
 }
 
+void MotorSensorController::setDirectionLockEnabled(bool enabled) {
+    _directionLockEnabled = enabled;
+    _preferences.putBool("dirLock", enabled);
+    if (!enabled) {
+        _az.dirLockDirection = 0;
+        _el.dirLockDirection = 0;
+        _az.dirLockHasTracked = false;
+        _el.dirLockHasTracked = false;
+        _az.dirLockChangeCount = 0;
+        _el.dirLockChangeCount = 0;
+        _dirLock_initialized = false;
+    }
+    _logger.info("Direction lock " + String(enabled ? "enabled" : "disabled"));
+}
+
+void MotorSensorController::setExtendedElEnabled(bool enabled) {
+    _extendedElEnabled = enabled;
+    _preferences.putBool("extendedEl", enabled);
+    _logger.info("Extended elevation " + String(enabled ? "enabled (-90 to 90)" : "disabled (0 to 90)"));
+}
+
+// =============================================================================
+// AUTO-HOME METHODS
+// =============================================================================
+
+void MotorSensorController::setAutoHomeEnabled(bool enabled) {
+    _autoHomeEnabled = enabled;
+    _preferences.putBool("autoHome", enabled);
+    if (!enabled) {
+        _autoHomeActive = false;
+    }
+    _logger.info("Auto-home " + String(enabled ? "enabled" : "disabled"));
+}
+
+void MotorSensorController::setAutoHomeTimeout(int minutes) {
+    if (minutes >= 1 && minutes <= 60) {
+        _autoHomeTimeoutMs = minutes * 60000UL;
+        _preferences.putInt("autoHomeMins", minutes);
+        _logger.info("Auto-home timeout set to: " + String(minutes) + " minutes");
+    }
+}
+
+int MotorSensorController::getAutoHomeTimeout() const {
+    return _autoHomeTimeoutMs / 60000;
+}
+
+void MotorSensorController::checkAutoHome() {
+    if (!_autoHomeEnabled) return;
+    if (_windStowActive || calMode) return;
+
+    unsigned long timeSinceManual = millis() - _lastManualSetpointTime;
+
+    if (timeSinceManual < _autoHomeTimeoutMs) {
+        _autoHomeActive = false;
+        return;
+    }
+
+    if (_autoHomeActive) return;
+
+    // Determine home position (same logic as /submitHome)
+    float homeAz = 0.0f;
+    float homeEl = 0.0f;
+    if (_weatherPoller != nullptr && _weatherPoller->isWindBasedHomeEnabled()) {
+        homeAz = _weatherPoller->getWindBasedHomePosition();
+    }
+
+    int timeoutMins = _autoHomeTimeoutMs / 60000;
+    _logger.info("Auto-home triggered after " + String(timeoutMins) + " minutes idle - homing to (" +
+                 String(homeAz, 1) + ", " + String(homeEl, 1) + ")");
+
+    setSetPointAzInternal(homeAz);
+    setSetPointElInternal(homeEl);
+    _autoHomeActive = true;
+}
+
+void MotorSensorController::updateDirectionLockAxis(AxisState& axis, float setpoint,
+                                                      bool setPointUpdated, bool hasWraparound) {
+    unsigned long now = millis();
+
+    // Stale timeout: clear direction if no updates for too long (stationary target)
+    if (axis.dirLockLastUpdate > 0 && (now - axis.dirLockLastUpdate > DIR_LOCK_STALE_MS)) {
+        if (axis.dirLockDirection != 0) axis.dirLockHasTracked = false;
+        axis.dirLockDirection = 0;
+        axis.dirLockChangeCount = 0;
+    }
+
+    if (setPointUpdated) {
+        float delta = setpoint - axis.dirLockPrevSetpoint;
+        // Wraparound handling for AZ axis
+        if (hasWraparound) {
+            if (delta > 180.0f) delta -= 360.0f;
+            else if (delta < -180.0f) delta += 360.0f;
+        }
+
+        if (fabs(delta) > DIR_LOCK_JUMP_THRESHOLD) {
+            // Large jump — new target, clear direction for normal P-control slew
+            axis.dirLockDirection = 0;
+            axis.dirLockHasTracked = false;
+            axis.dirLockChangeCount = 0;
+        } else if (fabs(delta) >= DIR_LOCK_MIN_DELTA) {
+            int newDir = (delta > 0) ? 1 : -1;
+            if (axis.dirLockDirection == 0) {
+                // No direction set yet — lock immediately
+                axis.dirLockDirection = newDir;
+                axis.dirLockChangeCount = 0;
+            } else if (newDir != axis.dirLockDirection) {
+                // Opposing direction — large deltas (>= tolerance) flip immediately,
+                // small deltas require consecutive confirmations to filter ADS-B jitter
+                if (fabs(delta) >= DIR_LOCK_CONFIDENT_DELTA) {
+                    axis.dirLockHasTracked = false;
+                    axis.dirLockDirection = newDir;
+                    axis.dirLockChangeCount = 0;
+                } else {
+                    axis.dirLockChangeCount++;
+                    if (axis.dirLockChangeCount >= DIR_LOCK_CHANGE_CONFIRMS) {
+                        axis.dirLockHasTracked = false;
+                        axis.dirLockDirection = newDir;
+                        axis.dirLockChangeCount = 0;
+                    }
+                }
+            } else {
+                // Same direction — reset change counter
+                axis.dirLockChangeCount = 0;
+            }
+        }
+        // If delta < MIN_DELTA, keep previous direction (micro-jitter filter)
+
+        axis.dirLockPrevSetpoint = setpoint;
+        axis.dirLockLastUpdate = now;
+    }
+}
+
+void MotorSensorController::updateDirectionLock(float setpoint_az, float setpoint_el,
+                                                 bool setPointAzUpdated, bool setPointElUpdated) {
+    // Clear state when feature disabled or in special modes
+    if (!_directionLockEnabled.load() || calMode || _windStowActive) {
+        _az.dirLockDirection = 0;
+        _el.dirLockDirection = 0;
+        _az.dirLockHasTracked = false;
+        _el.dirLockHasTracked = false;
+        _az.dirLockChangeCount = 0;
+        _el.dirLockChangeCount = 0;
+        _dirLock_initialized = false;
+        return;
+    }
+
+
+    // First call: seed previous setpoints without setting direction
+    if (!_dirLock_initialized) {
+        _az.dirLockPrevSetpoint = setpoint_az;
+        _el.dirLockPrevSetpoint = setpoint_el;
+        _az.dirLockLastUpdate = millis();
+        _el.dirLockLastUpdate = millis();
+        _dirLock_initialized = true;
+        return;
+    }
+
+    updateDirectionLockAxis(_az, setpoint_az, setPointAzUpdated, /*hasWraparound=*/true);
+    updateDirectionLockAxis(_el, setpoint_el, setPointElUpdated, /*hasWraparound=*/false);
+}
+
 // =============================================================================
 // MODIFIED SETPOINT METHODS TO HANDLE WIND STOW AND TRACKING
 // =============================================================================
 
 void MotorSensorController::setSetPointAz(float value) {
+    // Block external setpoint changes during over-power backoff
+    if (_overPowerBackoff) {
+        _logger.warn("Azimuth setpoint change blocked - over-power backoff in progress");
+        return;
+    }
+
     // Block external setpoint changes during wind stow (except during calibration)
     if (_windStowActive && !calMode) {
         _logger.warn("Azimuth setpoint change blocked - wind stow active");
@@ -572,20 +944,28 @@ void MotorSensorController::setSetPointAz(float value) {
     // Record manual setpoint command time and deactivate wind tracking
     _lastManualSetpointTime = millis();
     
-    _logger.info("MANUAL AZ command: " + String(value, 2) + "°");
+    _logger.debug("AZ setpoint: " + String(value, 2) + "°");
     if (_weatherPoller != nullptr && _weatherPoller->isWindBasedHomeEnabled()) {
-        _logger.info("  Wind home will activate in " + String(MANUAL_SETPOINT_TIMEOUT/1000) + " seconds");
+        _logger.debug("  Wind home will activate in " + String(MANUAL_SETPOINT_TIMEOUT/1000) + " seconds");
     }
     
     if (_windTrackingActive) {
         _logger.info("  Deactivating wind tracking due to manual command");
         setWindTrackingActive(false);
     }
-    
+
+    _autoHomeActive = false;
+
     setSetPointAzInternal(value);
 }
 
 void MotorSensorController::setSetPointEl(float value) {
+    // Block external setpoint changes during over-power backoff
+    if (_overPowerBackoff) {
+        _logger.warn("Elevation setpoint change blocked - over-power backoff in progress");
+        return;
+    }
+
     // Block external setpoint changes during wind stow (except during calibration)
     if (_windStowActive && !calMode) {
         _logger.warn("Elevation setpoint change blocked - wind stow active");
@@ -595,352 +975,207 @@ void MotorSensorController::setSetPointEl(float value) {
     // Record manual setpoint command time and deactivate wind tracking
     _lastManualSetpointTime = millis();
     
-    _logger.info("MANUAL EL command: " + String(value, 2) + "°");
+    _logger.debug("EL setpoint: " + String(value, 2) + "°");
     if (_weatherPoller != nullptr && _weatherPoller->isWindBasedHomeEnabled()) {
-        _logger.info("  Wind home will activate in " + String(MANUAL_SETPOINT_TIMEOUT/1000) + " seconds");
+        _logger.debug("  Wind home will activate in " + String(MANUAL_SETPOINT_TIMEOUT/1000) + " seconds");
     }
     
     if (_windTrackingActive) {
         _logger.info("  Deactivating wind tracking due to manual command");
         setWindTrackingActive(false);
     }
-    
+
+    _autoHomeActive = false;
+
     setSetPointElInternal(value);
 }
 
 
 void MotorSensorController::setSetPointAzInternal(float value) {
-    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, portMAX_DELAY) == pdTRUE) {
-        _setpoint_az = value;
-        _setPointAzUpdated = true;
+    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (value != _setpoint_az) {
+            _setpoint_az = value;
+            _setPointAzUpdated = true;
+        }
         xSemaphoreGive(_setPointMutex);
     }
 }
 
 void MotorSensorController::setSetPointElInternal(float value) {
-    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, portMAX_DELAY) == pdTRUE) {
-        _setpoint_el = value;
-        _setPointElUpdated = true;
+    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (value != _setpoint_el) {
+            _setpoint_el = value;
+            _setPointElUpdated = true;
+        }
         xSemaphoreGive(_setPointMutex);
     }
 }
 
 // =============================================================================
-// ERROR CONVERGENCE SAFETY METHODS (unchanged from original)
+// UNIFIED MOTOR CONTROL PIPELINE
 // =============================================================================
 
-void MotorSensorController::updateErrorTracking() {
-    unsigned long currentTime = millis();
-    
-    // Update azimuth error tracking
-    if (currentTime - _azErrorTracker.lastSampleTime >= ERROR_SAMPLE_INTERVAL) {
-        _azErrorTracker.errorHistory[_azErrorTracker.currentIndex] = abs(getErrorAz());
-        _azErrorTracker.timestamps[_azErrorTracker.currentIndex] = currentTime;
-        _azErrorTracker.currentIndex = (_azErrorTracker.currentIndex + 1) % ERROR_HISTORY_SIZE;
-        _azErrorTracker.sampleCount = min(_azErrorTracker.sampleCount + 1, ERROR_HISTORY_SIZE);
-        _azErrorTracker.lastSampleTime = currentTime;
-        _azErrorTracker.motorShouldBeActive = (setPointState_az && !_isAzMotorLatched && !global_fault);
-    }
-    
-    // Update elevation error tracking
-    if (currentTime - _elErrorTracker.lastSampleTime >= ERROR_SAMPLE_INTERVAL) {
-        _elErrorTracker.errorHistory[_elErrorTracker.currentIndex] = abs(getErrorEl());
-        _elErrorTracker.timestamps[_elErrorTracker.currentIndex] = currentTime;
-        _elErrorTracker.currentIndex = (_elErrorTracker.currentIndex + 1) % ERROR_HISTORY_SIZE;
-        _elErrorTracker.sampleCount = min(_elErrorTracker.sampleCount + 1, ERROR_HISTORY_SIZE);
-        _elErrorTracker.lastSampleTime = currentTime;
-        _elErrorTracker.motorShouldBeActive = (setPointState_el && !_isElMotorLatched && !global_fault);
-    }
-}
-
-void MotorSensorController::checkStall() {
-    unsigned long currentTime = millis();
-    _jitterAzMotors = false;
-    _jitterElMotors = false;
-
-    // Check azimuth convergence
-    if (_azErrorTracker.sampleCount >= ERROR_HISTORY_SIZE / 2 && 
-        _azErrorTracker.motorShouldBeActive &&
-        (currentTime - _azErrorTracker.setpointChangeTime) > CONVERGENCE_TIMEOUT) {
-
-        // Attempt to jitter the motor out of stall protection
-        if (isConvergenceStalled(_azErrorTracker, _MIN_AZ_TOLERANCE)) {
-            _jitterAzMotors = true;
+void MotorSensorController::actuateMotor(const AxisConfig& cfg, AxisState& axis, int minSpeed, float dt) {
+    // During emergency wind stow, lock EL motor once it has homed
+    if (_windStowActive && !cfg.isAzimuth) {
+        if (axis.isMotorLatched->load() || !axis.setPointState->load()) {
+            // EL has reached home (latched or within tolerance) — keep it stopped
+            setPWM(cfg.pwmPin, 255);
+            axis.currentSpeed = minSpeed;
+            *axis.isMotorLatched = true;
+            return;
         }
     }
 
-    if (_elErrorTracker.sampleCount >= ERROR_HISTORY_SIZE / 2 && 
-        _elErrorTracker.motorShouldBeActive &&
-        (currentTime - _elErrorTracker.setpointChangeTime) > CONVERGENCE_TIMEOUT) {
-        
-        if (isConvergenceStalled(_elErrorTracker, _MIN_EL_TOLERANCE)) {
-            _jitterElMotors = true;
-        }
+    double rawError = getAxisError(axis);
+    int effectiveP = _windStowActive ? cfg.emergencyP : *cfg.P;
+    float effectiveI = _windStowActive ? 0.0f : *cfg.I;  // no integral during stow
+    float effectiveD = _windStowActive ? 0.0f : *cfg.D;
+
+    // PID computation using measured dt
+    double pTerm = rawError * effectiveP;
+    double rawD = (rawError - axis.prevRawError) / dt;
+    axis.filteredDTerm = PID_D_FILTER_ALPHA * rawD + (1.0 - PID_D_FILTER_ALPHA) * axis.filteredDTerm;
+    double dTerm = axis.filteredDTerm * effectiveD;
+    axis.prevRawError = rawError;
+    axis.errorIntegral += rawError * dt;
+    axis.errorIntegral = constrain(axis.errorIntegral, -PID_INTEGRAL_LIMIT, PID_INTEGRAL_LIMIT);
+    double iTerm = axis.errorIntegral * effectiveI;
+
+    // Only apply D term when error is diverging (dTerm same sign as error).
+    // This accelerates the motor to catch fast-moving targets without
+    // causing braking oscillation near the target.
+    bool errorDiverging = (rawError >= 0 && dTerm > 0) || (rawError < 0 && dTerm < 0);
+    double pidOutput = pTerm + iTerm + (errorDiverging ? dTerm : 0.0);
+
+    // Exponential ramp on acceleration and direction changes to protect gears/motors.
+    // Deceleration (output magnitude decreasing, same sign) is unrestricted for fast response.
+    bool signChanged = (pidOutput >= 0) != (axis.prevPidOutput >= 0) &&
+                       fabs(axis.prevPidOutput) > 0.001;
+    bool accelerating = fabs(pidOutput) > fabs(axis.prevPidOutput);
+    if (accelerating || signChanged) {
+        float tau = _windStowActive ? PID_RAMP_TAU_STOW : PID_RAMP_TAU;
+        float alpha = 1.0f - expf(-dt / tau);
+        double ramped = axis.prevPidOutput + (pidOutput - axis.prevPidOutput) * alpha;
+        pidOutput = ramped;
     }
+    axis.prevPidOutput = pidOutput;
+
+    DirectionResult dir = resolveDirection(cfg, axis, pidOutput);
+    if (dir.shouldStop) return;
+
+    SpeedResult spd = calculateTargetSpeed(cfg, axis, pidOutput, minSpeed);
+    if (spd.earlyReturn) return;
+
+    applyMotorOutput(cfg, axis, spd.targetSpeed, pidOutput, minSpeed);
 }
 
-void MotorSensorController::checkErrorConvergence() {
-    // Only check convergence if we have enough data and sufficient time has passed since setpoint changes
-    unsigned long currentTime = millis();
-    
-    // Check azimuth convergence
-    if (_azErrorTracker.sampleCount >= ERROR_HISTORY_SIZE / 2 && 
-        _azErrorTracker.motorShouldBeActive &&
-        (currentTime - _azErrorTracker.setpointChangeTime) > CONVERGENCE_TIMEOUT) {
-        
-        if (isErrorDiverging(_azErrorTracker, _MIN_AZ_TOLERANCE)) {
-            if (!errorDivergenceFault) {
-                _logger.error("AZ Error divergence detected");
-                errorDivergenceFault = true;
+MotorSensorController::DirectionResult MotorSensorController::resolveDirection(
+        const AxisConfig& cfg, AxisState& axis, double error) {
+    bool dirLock = _directionLockEnabled.load() && (axis.dirLockDirection != 0);
+
+    if (dirLock) {
+        // Direction locked to setpoint movement direction
+        double axisError = getAxisError(axis);
+        if ((float)axis.dirLockDirection * axisError < 0) {
+            if (axis.dirLockHasTracked && fabs(axisError) < 5.0) {
+                // Dish previously reached the correct side and error is small —
+                // this is a real overshoot, latch and stop.
+                // Large errors (e.g. from unwind) are not overshoot.
+                *axis.isMotorLatched = true;
+                axis.errorIntegral = 0.0;
+                bool fwd = (axis.dirLockDirection * (*cfg.P) > 0) ^ cfg.invertDir;
+                digitalWrite(cfg.dirPin, fwd ? LOW : HIGH);
+                setPWM(cfg.pwmPin, 255);
+                return { true };
             }
-        }
-    }
-    
-    // Check elevation convergence
-    if (_elErrorTracker.sampleCount >= ERROR_HISTORY_SIZE / 2 && 
-        _elErrorTracker.motorShouldBeActive &&
-        (currentTime - _elErrorTracker.setpointChangeTime) > CONVERGENCE_TIMEOUT) {
-        
-        if (isErrorDiverging(_elErrorTracker, _MIN_EL_TOLERANCE)) {
-            if (!errorDivergenceFault) {
-                _logger.error("EL Error divergence detected");
-                errorDivergenceFault = true;
-            }
-        }
-    }
-}
-
-bool MotorSensorController::isErrorDiverging(const ErrorTracker& tracker, float tolerance) {
-    if (tracker.sampleCount < ERROR_HISTORY_SIZE / 2) return false;
-    
-    // Get recent error values
-    int recentSamples = min(tracker.sampleCount, ERROR_HISTORY_SIZE / 3);
-    float recentSum = 0;
-    float oldSum = 0;
-    int oldSamples = 0;
-    
-    // Calculate average of recent samples
-    for (int i = 0; i < recentSamples; i++) {
-        int idx = (tracker.currentIndex - 1 - i + ERROR_HISTORY_SIZE) % ERROR_HISTORY_SIZE;
-        recentSum += tracker.errorHistory[idx];
-    }
-    float recentAvg = recentSum / recentSamples;
-    
-    // Calculate average of older samples
-    for (int i = recentSamples; i < tracker.sampleCount; i++) {
-        int idx = (tracker.currentIndex - 1 - i + ERROR_HISTORY_SIZE) % ERROR_HISTORY_SIZE;
-        oldSum += tracker.errorHistory[idx];
-        oldSamples++;
-    }
-    
-    if (oldSamples == 0) return false;
-    float oldAvg = oldSum / oldSamples;
-    
-    // Check if error is diverging (recent average is significantly larger than old average)
-    bool isDiverging = (recentAvg > oldAvg * DIVERGENCE_THRESHOLD) && (recentAvg > tolerance * 2);
-    
-    if (isDiverging) {
-        _logger.debug("Divergence detected - Recent avg: " + String(recentAvg, 3) + 
-                     ", Old avg: " + String(oldAvg, 3) + ", Tolerance: " + String(tolerance, 3));
-    }
-    
-    return isDiverging;
-}
-
-bool MotorSensorController::isConvergenceStalled(const ErrorTracker& tracker, float tolerance) {
-    if (tracker.sampleCount < ERROR_HISTORY_SIZE / 2) return false;
-    
-    // Calculate the rate of change in error
-    float changeRate = calculateErrorChangeRate(tracker);
-    
-    // Get current error
-    int currentIdx = (tracker.currentIndex - 1 + ERROR_HISTORY_SIZE) % ERROR_HISTORY_SIZE;
-    float currentError = tracker.errorHistory[currentIdx];
-    
-    // Check if convergence is stalled:
-    // 1. Current error is above tolerance (motor should be active)
-    // 2. Rate of change is too small (not making progress)
-    bool isStalled = (currentError > tolerance * 1.5) && (abs(changeRate) < STALL_THRESHOLD);
-    
-    if (isStalled) {
-        _logger.debug("Stall detected - Current error: " + String(currentError, 3) + 
-                     ", Change rate: " + String(changeRate, 4) + " deg/s, Tolerance: " + String(tolerance, 3));
-    }
-    
-    return isStalled;
-}
-
-float MotorSensorController::calculateErrorChangeRate(const ErrorTracker& tracker) {
-    if (tracker.sampleCount < 3) return 0;
-    
-    // Use linear regression to calculate the slope (rate of change)
-    int samples = min(tracker.sampleCount, ERROR_HISTORY_SIZE / 2);
-    float sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    
-    for (int i = 0; i < samples; i++) {
-        int idx = (tracker.currentIndex - 1 - i + ERROR_HISTORY_SIZE) % ERROR_HISTORY_SIZE;
-        float x = i; // Time index (relative)
-        float y = tracker.errorHistory[idx];
-        
-        sumX += x;
-        sumY += y;
-        sumXY += x * y;
-        sumX2 += x * x;
-    }
-    
-    // Calculate slope using least squares method
-    float slope = (samples * sumXY - sumX * sumY) / (samples * sumX2 - sumX * sumX);
-    
-    // Convert to degrees per second (slope is in degrees per sample, multiply by sample rate)
-    return slope * (1000.0 / ERROR_SAMPLE_INTERVAL);
-}
-
-void MotorSensorController::resetErrorTracker(ErrorTracker& tracker) {
-    tracker.currentIndex = 0;
-    tracker.sampleCount = 0;
-    tracker.lastSampleTime = 0;
-    tracker.setpointChangeTime = millis();
-    tracker.motorShouldBeActive = false;
-    memset(tracker.errorHistory, 0, sizeof(tracker.errorHistory));
-    memset(tracker.timestamps, 0, sizeof(tracker.timestamps));
-}
-
-// =============================================================================
-// MOTOR CONTROL (unchanged from original)
-// =============================================================================
-
-void MotorSensorController::actuate_motor_az(int MIN_SPEED) {
-    // Use emergency high P gain during wind stow for maximum torque
-    int effectiveP_az = _windStowActive ? EMERGENCY_STOW_P_AZ : P_az;
-    double error = getErrorAz() * effectiveP_az;
-
-    // Set direction based on error sign
-    digitalWrite(_ccw_pin_az, (error >= 0) ? LOW : HIGH);
-
-    // Calculate target speed with constraints
-    int targetSpeed = MIN_SPEED - constrain(abs(error), _maxAdjustedSpeed_az, MIN_SPEED);
-    targetSpeed = max(targetSpeed, _maxAdjustedSpeed_az);
-
-    // Reset speed on direction change
-    if ((error < 0) != (_last_error_az < 0)) {
-        _current_speed_az = MIN_SPEED;
-    }
-    _last_error_az = error;
-
-    // Control motor speed
-    if (setPointState_az && !global_fault && !_isAzMotorLatched) {
-        // During emergency stow, use more aggressive speed changes
-        int speedDecrement = _windStowActive ? 20 : 10;  // Faster speed ramp during stow
-        
-        if (_current_speed_az > targetSpeed) {
-            _current_speed_az = max(_current_speed_az - speedDecrement, targetSpeed);
-        } else if (_current_speed_az < targetSpeed) {
-            _current_speed_az = min(_current_speed_az + speedDecrement, targetSpeed);
-        }
-        setPWM(_pwm_pin_az, _current_speed_az);
-
-        if(_jitterAzMotors) {
-            _logger.info("Attempting recovery of stalled AZ motor with jitter");
-            setPWM(_pwm_pin_az, 0);
-            digitalWrite(_ccw_pin_az, (error >= 0) ? HIGH : LOW);  // Brief opposite direction
-            delayMicroseconds(150000);
-            digitalWrite(_ccw_pin_az, (error >= 0) ? LOW : HIGH);
-            delayMicroseconds(150000);
-            setPWM(_pwm_pin_az, _current_speed_az);
+            // Dish never reached correct side, or error is large (unwind) —
+            // use normal P-control to drive toward target
+            bool fwd2 = (error >= 0) ^ cfg.invertDir;
+            digitalWrite(cfg.dirPin, fwd2 ? LOW : HIGH);
+        } else {
+            // Error agrees with locked direction — mark that dish has been on correct side
+            axis.dirLockHasTracked = true;
+            bool fwd = (axis.dirLockDirection * (*cfg.P) > 0) ^ cfg.invertDir;
+            digitalWrite(cfg.dirPin, fwd ? LOW : HIGH);
         }
     } else {
-        // Stop motor
-        setPWM(_pwm_pin_az, 255);
-        _current_speed_az = MIN_SPEED;
+        // Normal: set direction based on error sign
+        bool fwd = (error >= 0) ^ cfg.invertDir;
+        digitalWrite(cfg.dirPin, fwd ? LOW : HIGH);
     }
+
+    return { false };
 }
 
+MotorSensorController::SpeedResult MotorSensorController::calculateTargetSpeed(
+        const AxisConfig& cfg, AxisState& axis, double error, int minSpeed) {
+    // P-controller: map error magnitude to PWM speed
+    int targetSpeed = minSpeed - constrain(abs(error), axis.maxAdjustedSpeed, minSpeed);
+    targetSpeed = max(targetSpeed, axis.maxAdjustedSpeed);
 
-void MotorSensorController::actuate_motor_el(int MIN_SPEED) {
-    // Use emergency high P gain during wind stow for maximum torque
-    int effectiveP_el = _windStowActive ? EMERGENCY_STOW_P_EL : P_el;
-    double error = getErrorEl() * effectiveP_el;
+    return { targetSpeed, false };
+}
 
-    // Set direction based on error sign
-    digitalWrite(_ccw_pin_el, (error >= 0) ? LOW : HIGH);
-
-    // Calculate target speed with constraints
-    int targetSpeed = MIN_SPEED - constrain(abs(error), _maxAdjustedSpeed_el, MIN_SPEED);
-    targetSpeed = max(targetSpeed, _maxAdjustedSpeed_el);
-
-    // Reset speed on direction change
-    if ((error < 0) != (_last_error_el < 0)) {
-        _current_speed_el = MIN_SPEED;
-    }
-    _last_error_el = error;
-
-    // Control motor speed
-    if (setPointState_el && !global_fault && !_isElMotorLatched) {
-        // During emergency stow, use more aggressive speed changes
-        int speedDecrement = _windStowActive ? 20 : 10;  // Faster speed ramp during stow
-        
-        if (_current_speed_el > targetSpeed) {
-            _current_speed_el = max(_current_speed_el - speedDecrement, targetSpeed);
-        } else if (_current_speed_el < targetSpeed) {
-            _current_speed_el = min(_current_speed_el + speedDecrement, targetSpeed);
-        }
-        setPWM(_pwm_pin_el, _current_speed_el);
-
-        if(_jitterElMotors) {
-            _logger.info("Attempting recovery of stalled EL motor with jitter");
-            setPWM(_pwm_pin_el, 0);
-            digitalWrite(_ccw_pin_el, (error >= 0) ? HIGH : LOW);  // Brief opposite direction
-            delayMicroseconds(150000);
-            digitalWrite(_ccw_pin_el, (error >= 0) ? LOW : HIGH);
-            delayMicroseconds(150000);
-            setPWM(_pwm_pin_el, _current_speed_el);
-        }
+void MotorSensorController::applyMotorOutput(const AxisConfig& cfg, AxisState& axis,
+                                              int targetSpeed, double error, int minSpeed) {
+    // Normal motor control
+    if (axis.setPointState->load() && !global_fault && !axis.isMotorLatched->load()) {
+        axis.currentSpeed = targetSpeed;
+        setPWM(cfg.pwmPin, targetSpeed);
     } else {
         // Stop motor
-        setPWM(_pwm_pin_el, 255);
-        _current_speed_el = MIN_SPEED;
+        setPWM(cfg.pwmPin, 255);
+        axis.currentSpeed = minSpeed;
     }
 }
 
 void MotorSensorController::updateMotorControl(float currentSetPointAz, float currentSetPointEl, bool setPointAzUpdated, bool setPointElUpdated) {
-    // Determine if motors should be active based on error tolerance
     setPointState_az = (fabs(getErrorAz()) > _MIN_AZ_TOLERANCE);
     setPointState_el = (fabs(getErrorEl()) > _MIN_EL_TOLERANCE);
 
+    // Direction lock override: keep motor active while tracking a moving target,
+    // even when error is within tolerance. Without this, small tracking deltas
+    // (~0.1°) fall within tolerance, causing the motor to wait until error
+    // accumulates, then jerk forward and overshoot repeatedly.
+    if (_directionLockEnabled.load()) {
+        if (_az.dirLockDirection != 0) setPointState_az = true;
+        if (_el.dirLockDirection != 0) setPointState_el = true;
+    }
+
+    // Apply latching logic for each axis
+    updateLatch(_azCfg, _az, setPointAzUpdated);
+    updateLatch(_elCfg, _el, setPointElUpdated);
+}
+
+void MotorSensorController::updateLatch(const AxisConfig& cfg, AxisState& axis,
+                                         bool setPointUpdated) {
     // Reset latch parameters on setpoint changes
-    if (setPointAzUpdated) {
-        _isAzMotorLatched = false;
-        _prev_error_az = 0;
-        resetErrorTracker(_azErrorTracker);
-        errorDivergenceFault = false;  // Clear convergence faults on new setpoint
+    if (setPointUpdated) {
+        *axis.isMotorLatched = false;
+        axis.prevError = 0;
+        axis.errorIntegral = 0.0;
+        axis.prevRawError = 0.0;
+        axis.filteredDTerm = 0.0;
+        return;
     }
 
-    if (setPointElUpdated) {
-        _isElMotorLatched = false;
-        _prev_error_el = 0;
-        resetErrorTracker(_elErrorTracker);
-        errorDivergenceFault = false;  // Clear convergence faults on new setpoint
+    // Detect overshoot (error sign flip) — motor passed through the target.
+    // Only count sign flips when error is small — a flip at large error is likely
+    // a 360° wraparound glitch, not a real overshoot.
+    double currentError = getAxisError(axis);
+    bool signFlipped = (axis.prevError * currentError < 0) &&
+                       (fabs(axis.prevError) > 0.0001) &&
+                       (fabs(currentError) > 0.0001) &&
+                       (fabs(currentError) < 5.0);
+
+    // Latch motor on target reached or overshoot
+    if (!axis.setPointState->load() || signFlipped) {
+        *axis.isMotorLatched = true;
+        axis.errorIntegral = 0.0;
     }
 
-    // Detect overshoot (error sign flip)
-    bool az_sign_flipped = (_prev_error_az * getErrorAz() < 0) && 
-                          (fabs(_prev_error_az) > 0.0001) && 
-                          (fabs(getErrorAz()) > 0.0001);
-    bool el_sign_flipped = (_prev_error_el * getErrorEl() < 0) && 
-                          (fabs(_prev_error_el) > 0.0001) && 
-                          (fabs(getErrorEl()) > 0.0001);
-
-    // Latch motors on target reached or overshoot
-    if (!setPointState_az || az_sign_flipped) {
-        _isAzMotorLatched = true;
-    }
-
-    if (!setPointState_el || el_sign_flipped) {
-        _isElMotorLatched = true;
-    }
-
-    _prev_error_az = getErrorAz();
-    _prev_error_el = getErrorEl();
+    axis.prevError = currentError;
 }
 
 void MotorSensorController::updateMotorPriority(bool setPointAzUpdated, bool setPointElUpdated) {
@@ -948,10 +1183,17 @@ void MotorSensorController::updateMotorPriority(bool setPointAzUpdated, bool set
     if (singleMotorMode) {
         // Determine priority based on normalized error when setpoint changes
         if (setPointAzUpdated || setPointElUpdated) {
-            // Normalize by motor speeds (1.5RPM for az, 0.25RPM for el)
-            _az_priority = (fabs(getErrorAz()) / 1.5 > fabs(getErrorEl()) / 0.25);
+            float errorAz = fabs(getErrorAz());
+            float errorEl = fabs(getErrorEl());
+            // Guard against NaN from bad sensor data
+            if (isnan(errorAz) || isnan(errorEl)) {
+                _az_priority = !isnan(errorAz);  // Prioritize whichever axis has valid data
+            } else {
+                // Normalize by motor speeds (1.5RPM for az, 0.25RPM for el)
+                _az_priority = (errorAz / 1.5 > errorEl / 0.25);
+            }
         }
-        
+
         // Execute priority control
         if (_az_priority) {
             if (setPointState_az) {
@@ -969,8 +1211,8 @@ void MotorSensorController::updateMotorPriority(bool setPointAzUpdated, bool set
     }
 
     // Adjust maximum speeds based on motor activity
-    _maxAdjustedSpeed_az = setPointState_el ? max_dual_motor_az_speed : max_single_motor_az_speed;
-    _maxAdjustedSpeed_el = setPointState_az ? max_dual_motor_el_speed : max_single_motor_el_speed;
+    _az.maxAdjustedSpeed = setPointState_el ? max_dual_motor_az_speed : max_single_motor_az_speed;
+    _el.maxAdjustedSpeed = setPointState_az ? max_dual_motor_el_speed : max_single_motor_el_speed;
 }
 
 void MotorSensorController::setPWM(int pin, int PWM) {
@@ -1040,6 +1282,8 @@ float MotorSensorController::correctAngle(float startAngle, float inputAngle) {
     float correctedAngle = inputAngle - startAngle;
     if (correctedAngle < 0) {
         correctedAngle += 360;
+    } else if (correctedAngle >= 360) {
+        correctedAngle -= 360;
     }
     return correctedAngle;
 }
@@ -1069,56 +1313,71 @@ void MotorSensorController::calcIfNeedsUnwind(float correctedAngle_az) {
 // SENSOR READING AND I2C COMMUNICATION (unchanged from original)
 // =============================================================================
 
-float MotorSensorController::getAvgAngle(int i2c_addr) {
-    if (_getAngleMutex == NULL || xSemaphoreTake(_getAngleMutex, portMAX_DELAY) != pdTRUE) {
-        _logger.error("Failed to take mutex in getAvgAngle");
+float MotorSensorController::readFilteredAngle(int i2c_addr, AxisState& axis) {
+    if (_getAngleMutex == NULL || xSemaphoreTake(_getAngleMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        _logger.error("Failed to take mutex in readFilteredAngle");
         badAngleFlag = true;
         return 0;
     }
 
-    // Verify magnet presence before reading
-    int magnetStatus = checkMagnetPresence(i2c_addr);
-    if ((magnetStatus & 32) == 0) {
-        _logger.error("MAGNET WENT MISSING DURING ROUTINE ANGLE READ!");
-        magnetFault = true;
-    }
+    float rawAngle = ReadRawAngle(i2c_addr);
 
-    float angles[_numAvg];
-    int validReadings = 0;
-    int errorCounter = 0;
-    const int MAX_ATTEMPTS = _numAvg * 2;
-    
-    // Collect angle readings
-    for (int attempt = 0; attempt < MAX_ATTEMPTS && validReadings < _numAvg; attempt++) {
-        float rawAngle = ReadRawAngle(i2c_addr);
-        
-        if (rawAngle != -999) {
-            angles[validReadings++] = rawAngle;
-        } else {
-            errorCounter++;
-            if (errorCounter > _numAvg) break;
-        }
-        
-        delayMicroseconds(100);
-    }
-
-    // Handle insufficient readings
-    if (validReadings == 0) {
+    if (rawAngle == -999) {
+        // I2C read failed — return previous filtered angle
         xSemaphoreGive(_getAngleMutex);
-        _logger.error("Failed to get any valid angle readings");
-        badAngleFlag = true;
-        return 0;
+        if (!axis.angleFilterInitialized) {
+            return 0;
+        }
+        float prevDeg = atan2f(axis.filteredAngleY, axis.filteredAngleX) * 180.0f / PI;
+        if (prevDeg < 0) prevDeg += 360.0f;
+        return prevDeg;
     }
 
-    float angleMean = calculateAngleMeanWithDiscard(angles, validReadings);
+    float rawRad = rawAngle * PI / 180.0f;
+    float x = cosf(rawRad);
+    float y = sinf(rawRad);
+
+    // First reading: seed the filter directly
+    if (!axis.angleFilterInitialized) {
+        axis.filteredAngleX = x;
+        axis.filteredAngleY = y;
+        axis.angleFilterInitialized = true;
+        xSemaphoreGive(_getAngleMutex);
+        return rawAngle;
+    }
+
+    // Wraparound-safe jump rejection: compute shortest angular distance
+    float filteredRad = atan2f(axis.filteredAngleY, axis.filteredAngleX);
+    float diff = atan2f(sinf(rawRad - filteredRad), cosf(rawRad - filteredRad));
+    float diffDeg = diff * 180.0f / PI;
+
+    if (fabsf(diffDeg) > ANGLE_JUMP_THRESHOLD) {
+        // Reject wild reading
+        updateI2CErrorCounter(i2c_addr);
+        xSemaphoreGive(_getAngleMutex);
+        float prevDeg = filteredRad * 180.0f / PI;
+        if (prevDeg < 0) prevDeg += 360.0f;
+        return prevDeg;
+    }
+
+    // Apply EMA filter
+    axis.filteredAngleX = ANGLE_EMA_ALPHA * x + (1.0f - ANGLE_EMA_ALPHA) * axis.filteredAngleX;
+    axis.filteredAngleY = ANGLE_EMA_ALPHA * y + (1.0f - ANGLE_EMA_ALPHA) * axis.filteredAngleY;
+
+    float filteredDeg = atan2f(axis.filteredAngleY, axis.filteredAngleX) * 180.0f / PI;
+    if (filteredDeg < 0) filteredDeg += 360.0f;
+
     xSemaphoreGive(_getAngleMutex);
-    
-    return angleMean;
+    return filteredDeg;
 }
 
 float MotorSensorController::ReadRawAngle(int i2c_addr) {
     uint8_t buffer[2];
-    const unsigned long timeout = 3000;
+
+    // Take shared I2C bus mutex to prevent contention with INA219
+    if (_i2cMutex != NULL && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return -999;  // I2C bus busy, skip this reading
+    }
 
     // Request angle data
     Wire.beginTransmission(i2c_addr);
@@ -1126,6 +1385,7 @@ float MotorSensorController::ReadRawAngle(int i2c_addr) {
     byte error = Wire.endTransmission(false);
 
     if (error != 0) {
+        if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
         _logger.error("I2C error during transmission to sensor 0x" + String(i2c_addr, HEX) + ": " + String(error));
         updateI2CErrorCounter(i2c_addr);
         return -999;
@@ -1135,32 +1395,21 @@ float MotorSensorController::ReadRawAngle(int i2c_addr) {
     byte bytesReceived = Wire.requestFrom(i2c_addr, 2);
 
     if (bytesReceived != 2) {
+        if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
         _logger.error("I2C error: Requested 2 bytes but received " + String(bytesReceived) + " from 0x" + String(i2c_addr, HEX));
         updateI2CErrorCounter(i2c_addr);
         return -999;
     }
 
-    // Timeout check
-    /*unsigned long startTime = millis();
-    while (Wire.available() < 2) {
-        if (millis() - startTime > timeout) {
-            _logger.error("Timeout waiting for bytes from hall sensor");
-            return -999;
-        }
-    }
-
-    // Read and process data
-    Wire.readBytes(buffer, 2);
-    word rawAngleValue = ((uint16_t)buffer[0] << 8) | buffer[1];
-    return rawAngleValue * 0.087890625; // Convert to degrees*/
-
     // Wire.setTimeOut() already handles timeout - just check if data is available
     if (Wire.available() >= 2) {
         Wire.readBytes(buffer, 2);
+        if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
         word rawAngleValue = ((uint16_t)buffer[0] << 8) | buffer[1];
         resetI2CErrorCounter(i2c_addr);
         return rawAngleValue * 0.087890625;
     } else {
+        if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
         _logger.error("I2C bytes not available from sensor");
         updateI2CErrorCounter(i2c_addr);
         return -999;
@@ -1170,74 +1419,53 @@ float MotorSensorController::ReadRawAngle(int i2c_addr) {
 int MotorSensorController::checkMagnetPresence(int i2c_addr) {
     int magnetStatus = 0;
     byte error;
-    
+
+    // Take shared I2C bus mutex
+    if (_i2cMutex != NULL && xSemaphoreTake(_i2cMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        _logger.error("I2C bus busy during magnet check for 0x" + String(i2c_addr, HEX));
+        return -999;
+    }
+
     while (true) {
         Wire.beginTransmission(i2c_addr);
         Wire.write(0x0B); // Status register
         error = Wire.endTransmission();
-        
+
         if (error != 0) {
             _logger.error("I2C error during transmission to sensor 0x" + String(i2c_addr, HEX) + ": " + String(error));
             updateI2CErrorCounter(i2c_addr);
-            
+
             // Check consecutive error limit
-            if ((i2c_addr == _az_hall_i2c_addr && _consecutivei2cErrors_az > MAX_CONSECUTIVE_ERRORS) ||
-                (i2c_addr == _el_hall_i2c_addr && _consecutivei2cErrors_el > MAX_CONSECUTIVE_ERRORS)) {
+            if ((i2c_addr == _az_hall_i2c_addr && _az.consecutiveI2cErrors > MAX_CONSECUTIVE_ERRORS) ||
+                (i2c_addr == _el_hall_i2c_addr && _el.consecutiveI2cErrors > MAX_CONSECUTIVE_ERRORS)) {
                 if (i2c_addr == _az_hall_i2c_addr) i2cErrorFlag_az = true;
                 else i2cErrorFlag_el = true;
+                if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
                 return -999;
             }
             continue;
         }
-        
+
         Wire.requestFrom(i2c_addr, 1);
-        while (Wire.available() == 0);
+
+        // Wait for data with timeout instead of spinning forever
+        unsigned long waitStart = millis();
+        while (Wire.available() == 0) {
+            if (millis() - waitStart > 1000) {
+                _logger.error("I2C timeout waiting for magnet status from 0x" + String(i2c_addr, HEX));
+                if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
+                return -999;
+            }
+            delay(1);
+        }
+
         magnetStatus = Wire.read();
         break;
     }
 
+    if (_i2cMutex != NULL) xSemaphoreGive(_i2cMutex);
     resetI2CErrorCounter(i2c_addr);
     return magnetStatus;
-}
-
-float MotorSensorController::calculateAngleMeanWithDiscard(float* array, int size) {
-    float x[size], y[size];
-
-    // Convert angles to unit vectors
-    for (int i = 0; i < size; i++) {
-        float angleRad = array[i] * PI / 180.0;
-        x[i] = cos(angleRad);
-        y[i] = sin(angleRad);
-    }
-
-    // Calculate means
-    float xSum = 0, ySum = 0;
-    for (int i = 0; i < size; i++) {
-        xSum += x[i];
-        ySum += y[i];
-    }
-    float xMean = xSum / size;
-    float yMean = ySum / size;
-
-    // Calculate standard deviations
-    float sumX = 0, sumY = 0;
-    for (int i = 0; i < size; i++) {
-        sumX += pow(x[i] - xMean, 2);
-        sumY += pow(y[i] - yMean, 2);
-    }
-    float stdDevX = sqrt(sumX / (size > 1 ? size - 1 : 1));
-    float stdDevY = sqrt(sumY / (size > 1 ? size - 1 : 1));
-
-    // Calculate final mean excluding outliers
-    xSum = ySum = 0;
-    for (int i = 0; i < size; i++) {
-        if ((fabs(x[i] - xMean) <= 2.0 * stdDevX) && (fabs(y[i] - yMean) <= 2.0 * stdDevY)) {
-            xSum += x[i];
-            ySum += y[i];
-        }
-    }
-
-    return atan2(ySum, xSum) * 180.0 / PI;
 }
 
 // =============================================================================
@@ -1246,7 +1474,7 @@ float MotorSensorController::calculateAngleMeanWithDiscard(float* array, int siz
 
 float MotorSensorController::getSetPointAz() {
     float result = 0;
-    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, portMAX_DELAY) == pdTRUE) {
+    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _setpoint_az;
         xSemaphoreGive(_setPointMutex);
     }
@@ -1255,7 +1483,7 @@ float MotorSensorController::getSetPointAz() {
 
 float MotorSensorController::getSetPointEl() {
     float result = 0;
-    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, portMAX_DELAY) == pdTRUE) {
+    if (_setPointMutex != NULL && xSemaphoreTake(_setPointMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _setpoint_el;
         xSemaphoreGive(_setPointMutex);
     }
@@ -1263,14 +1491,14 @@ float MotorSensorController::getSetPointEl() {
 }
 
 void MotorSensorController::setCorrectedAngleAz(float value) {
-    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, portMAX_DELAY) == pdTRUE) {
+    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _correctedAngle_az = value;
         xSemaphoreGive(_correctedAngleMutex);
     }
 }
 
 void MotorSensorController::setCorrectedAngleEl(float value) {
-    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, portMAX_DELAY) == pdTRUE) {
+    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _correctedAngle_el = value;
         xSemaphoreGive(_correctedAngleMutex);
     }
@@ -1278,7 +1506,7 @@ void MotorSensorController::setCorrectedAngleEl(float value) {
 
 float MotorSensorController::getCorrectedAngleAz() {
     float result = 0;
-    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, portMAX_DELAY) == pdTRUE) {
+    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _correctedAngle_az;
         xSemaphoreGive(_correctedAngleMutex);
     }
@@ -1287,40 +1515,39 @@ float MotorSensorController::getCorrectedAngleAz() {
 
 float MotorSensorController::getCorrectedAngleEl() {
     float result = 0;
-    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, portMAX_DELAY) == pdTRUE) {
+    if (_correctedAngleMutex != NULL && xSemaphoreTake(_correctedAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _correctedAngle_el;
         xSemaphoreGive(_correctedAngleMutex);
     }
     return result;
 }
 
-double MotorSensorController::getErrorAz() {
+double MotorSensorController::getAxisError(const AxisState& axis) {
     double result = 0;
-    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, portMAX_DELAY) == pdTRUE) {
-        result = _error_az;
+    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        result = *axis.error;
         xSemaphoreGive(_errorMutex);
     }
     return result;
 }
 
+double MotorSensorController::getErrorAz() {
+    return getAxisError(_az);
+}
+
 void MotorSensorController::setErrorAz(float value) {
-    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, portMAX_DELAY) == pdTRUE) {
+    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _error_az = value;
         xSemaphoreGive(_errorMutex);
     }
 }
 
 double MotorSensorController::getErrorEl() {
-    double result = 0;
-    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, portMAX_DELAY) == pdTRUE) {
-        result = _error_el;
-        xSemaphoreGive(_errorMutex);
-    }
-    return result;
+    return getAxisError(_el);
 }
 
 void MotorSensorController::setErrorEl(float value) {
-    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, portMAX_DELAY) == pdTRUE) {
+    if (_errorMutex != NULL && xSemaphoreTake(_errorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _error_el = value;
         xSemaphoreGive(_errorMutex);
     }
@@ -1328,7 +1555,7 @@ void MotorSensorController::setErrorEl(float value) {
 
 float MotorSensorController::getElStartAngle() {
     float result = 0;
-    if (_el_startAngleMutex != NULL && xSemaphoreTake(_el_startAngleMutex, portMAX_DELAY) == pdTRUE) {
+    if (_el_startAngleMutex != NULL && xSemaphoreTake(_el_startAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _el_startAngle;
         xSemaphoreGive(_el_startAngleMutex);
     }
@@ -1336,11 +1563,13 @@ float MotorSensorController::getElStartAngle() {
 }
 
 void MotorSensorController::setElStartAngle(float value) {
-    if (_el_startAngleMutex != NULL && xSemaphoreTake(_el_startAngleMutex, portMAX_DELAY) == pdTRUE) {
-        _preferences.putFloat("el_cal", value);
+    if (_el_startAngleMutex != NULL && xSemaphoreTake(_el_startAngleMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _el_startAngle = value;
         xSemaphoreGive(_el_startAngleMutex);
     }
+
+    // NVS write outside mutex — can block during wear-leveling
+    _preferences.putFloat("el_cal", value);
 }
 
 int MotorSensorController::getMinVoltageThreshold() {
@@ -1355,23 +1584,72 @@ void MotorSensorController::setMinVoltageThreshold(int value) {
     }
 }
 
-int MotorSensorController::getMaxPowerBeforeFault() {
-    return _maxPowerBeforeFault;
+int MotorSensorController::getMaxPowerFaultAz() {
+    return _maxPowerFaultAz;
 }
 
-void MotorSensorController::setMaxPowerBeforeFault(int value) {
-    if (value > 0 && value < 25) {
-        _maxPowerBeforeFault = value;
-        _preferences.putInt("MAX_POWER", value);
+void MotorSensorController::setMaxPowerFaultAz(int value) {
+    if (value >= 1 && value <= 25) {
+        _maxPowerFaultAz = value;
+        _preferences.putInt("MAX_PWR_AZ", value);
+        _logger.info("MAX_FAULT_POWER_AZ set to: " + String(value) + "W");
     }
+}
+
+int MotorSensorController::getMaxPowerFaultEl() {
+    return _maxPowerFaultEl;
+}
+
+void MotorSensorController::setMaxPowerFaultEl(int value) {
+    if (value >= 1 && value <= 25) {
+        _maxPowerFaultEl = value;
+        _preferences.putInt("MAX_PWR_EL", value);
+        _logger.info("MAX_FAULT_POWER_EL set to: " + String(value) + "W");
+    }
+}
+
+int MotorSensorController::getMaxPowerFaultTotal() {
+    return _maxPowerFaultTotal;
+}
+
+void MotorSensorController::setMaxPowerFaultTotal(int value) {
+    if (value >= 1 && value <= 25) {
+        _maxPowerFaultTotal = value;
+        _preferences.putInt("MAX_PWR_TOT", value);
+        _logger.info("MAX_FAULT_POWER_TOTAL set to: " + String(value) + "W");
+    }
+}
+
+int MotorSensorController::getActivePowerThreshold() {
+    bool azActive = setPointState_az.load() && !_isAzMotorLatched.load() && !global_fault.load();
+    bool elActive = setPointState_el.load() && !_isElMotorLatched.load() && !global_fault.load();
+    if (azActive && elActive) return _maxPowerFaultTotal.load();
+    if (azActive) return _maxPowerFaultAz.load();
+    if (elActive) return _maxPowerFaultEl.load();
+    return _maxPowerFaultTotal.load();
 }
 
 // =============================================================================
 // CONFIGURATION PARAMETER SETTERS (unchanged from original)
 // =============================================================================
 
+int MotorSensorController::getMotorSpeedPctAz() const {
+    // PWM 0 = full speed, 255 = stopped. currentSpeed is the actual PWM value.
+    // When motor is stopped, currentSpeed = MIN_AZ_SPEED but PWM pin is set to 255.
+    // Report based on active state: if not active, 0%.
+    if (!setPointState_az.load() || _isAzMotorLatched.load() || global_fault.load()) return 0;
+    int pct = (int)(100.0f * (1.0f - (float)_az.currentSpeed / 255.0f));
+    return constrain(pct, 0, 100);
+}
+
+int MotorSensorController::getMotorSpeedPctEl() const {
+    if (!setPointState_el.load() || _isElMotorLatched.load() || global_fault.load()) return 0;
+    int pct = (int)(100.0f * (1.0f - (float)_el.currentSpeed / 255.0f));
+    return constrain(pct, 0, 100);
+}
+
 void MotorSensorController::setPEl(int value) {
-    if (value >= -1000 && value <= 1000) {
+    if (value >= 0 && value <= 1000) {
         P_el = value;
         _preferences.putInt("P_el", value);
         _logger.info("P_el set to: " + String(value));
@@ -1379,25 +1657,77 @@ void MotorSensorController::setPEl(int value) {
 }
 
 void MotorSensorController::setPAz(int value) {
-    if (value >= -1000 && value <= 1000) {
+    if (value >= 0 && value <= 1000) {
         P_az = value;
         _preferences.putInt("P_az", value);
         _logger.info("P_az set to: " + String(value));
     }
 }
 
+void MotorSensorController::setIEl(float value) {
+    if (value >= 0.0f && value <= 1000.0f) {
+        I_el = value;
+        _preferences.putFloat("I_el", value);
+        _logger.info("I_el set to: " + String(value));
+    }
+}
+
+void MotorSensorController::setIAz(float value) {
+    if (value >= 0.0f && value <= 1000.0f) {
+        I_az = value;
+        _preferences.putFloat("I_az", value);
+        _logger.info("I_az set to: " + String(value));
+    }
+}
+
+void MotorSensorController::setDEl(float value) {
+    if (value >= 0.0f && value <= 1000.0f) {
+        D_el = value;
+        _preferences.putFloat("D_el", value);
+        _logger.info("D_el set to: " + String(value));
+    }
+}
+
+void MotorSensorController::setDAz(float value) {
+    if (value >= 0.0f && value <= 1000.0f) {
+        D_az = value;
+        _preferences.putFloat("D_az", value);
+        _logger.info("D_az set to: " + String(value));
+    }
+}
+
 void MotorSensorController::setMinElSpeed(int value) {
     if (value >= 0 && value <= 255) {
+        int oldMin = MIN_EL_SPEED.load();
+        float dualElPct = convertSpeedToPercentage((float)max_dual_motor_el_speed, oldMin);
+        float singleElPct = convertSpeedToPercentage((float)max_single_motor_el_speed, oldMin);
+
         MIN_EL_SPEED = value;
         _preferences.putInt("MIN_EL_SPEED", value);
+
+        max_dual_motor_el_speed = convertPercentageToSpeed(dualElPct, value);
+        max_single_motor_el_speed = convertPercentageToSpeed(singleElPct, value);
+        _preferences.putInt("maxDMElSpeed", max_dual_motor_el_speed);
+        _preferences.putInt("maxSMElSpeed", max_single_motor_el_speed);
+
         _logger.info("MIN_EL_SPEED set to: " + String(value));
     }
 }
 
 void MotorSensorController::setMinAzSpeed(int value) {
     if (value >= 0 && value <= 255) {
+        int oldMin = MIN_AZ_SPEED.load();
+        float dualAzPct = convertSpeedToPercentage((float)max_dual_motor_az_speed, oldMin);
+        float singleAzPct = convertSpeedToPercentage((float)max_single_motor_az_speed, oldMin);
+
         MIN_AZ_SPEED = value;
         _preferences.putInt("MIN_AZ_SPEED", value);
+
+        max_dual_motor_az_speed = convertPercentageToSpeed(dualAzPct, value);
+        max_single_motor_az_speed = convertPercentageToSpeed(singleAzPct, value);
+        _preferences.putInt("maxDMAzSpeed", max_dual_motor_az_speed);
+        _preferences.putInt("maxSMAzSpeed", max_single_motor_az_speed);
+
         _logger.info("MIN_AZ_SPEED set to: " + String(value));
     }
 }
@@ -1420,7 +1750,7 @@ void MotorSensorController::setMinElTolerance(float value) {
 
 float MotorSensorController::getAzOffset() {
     float result = 0.0;
-    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, portMAX_DELAY) == pdTRUE) {
+    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _az_offset;
         xSemaphoreGive(_offsetMutex);
     }
@@ -1433,20 +1763,21 @@ void MotorSensorController::setAzOffset(float offset) {
         _logger.warn("AZ offset out of range: " + String(offset, 3) + "° (range: ±180°)");
         return;
     }
-    
-    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, portMAX_DELAY) == pdTRUE) {
+
+    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _az_offset = offset;
-        _preferences.putFloat("az_offset", offset);
         _setPointAzUpdated = true;
         xSemaphoreGive(_offsetMutex);
     }
-    
+
+    // NVS write outside mutex — can block during wear-leveling
+    _preferences.putFloat("az_offset", offset);
     _logger.info("AZ angle offset set to: " + String(offset, 3) + "°");
 }
 
 float MotorSensorController::getElOffset() {
     float result = 0.0;
-    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, portMAX_DELAY) == pdTRUE) {
+    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         result = _el_offset;
         xSemaphoreGive(_offsetMutex);
     }
@@ -1459,14 +1790,15 @@ void MotorSensorController::setElOffset(float offset) {
         _logger.warn("EL offset out of range: " + String(offset, 3) + "° (range: ±5°)");
         return;
     }
-    
-    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, portMAX_DELAY) == pdTRUE) {
+
+    if (_offsetMutex != NULL && xSemaphoreTake(_offsetMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _el_offset = offset;
-        _preferences.putFloat("el_offset", offset);
         _setPointElUpdated = true;
         xSemaphoreGive(_offsetMutex);
     }
-    
+
+    // NVS write outside mutex — can block during wear-leveling
+    _preferences.putFloat("el_offset", offset);
     _logger.info("EL angle offset set to: " + String(offset, 3) + "°");
 }
 
@@ -1486,7 +1818,7 @@ float MotorSensorController::getAdjustedElStartAngle() {
 // =============================================================================
 
 void MotorSensorController::activateCalMode(bool on) {
-    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (on) {
             calMode = true;
             global_fault = false;
@@ -1497,6 +1829,19 @@ void MotorSensorController::activateCalMode(bool on) {
             calMode = false;
             _calRunTime = 0;  // Also clear any pending cal movement
             _calAxis = "";
+
+            // Reset motor latches and PID state so motors resume moving to setpoint
+            _isAzMotorLatched = false;
+            _isElMotorLatched = false;
+            _az.prevError = 0;
+            _az.errorIntegral = 0.0;
+            _az.prevRawError = 0.0;
+            _az.filteredDTerm = 0.0;
+            _el.prevError = 0;
+            _el.errorIntegral = 0.0;
+            _el.prevRawError = 0.0;
+            _el.filteredDTerm = 0.0;
+
             _logger.info("calMode set to false");
         }
         xSemaphoreGive(_calMutex);
@@ -1504,7 +1849,7 @@ void MotorSensorController::activateCalMode(bool on) {
 }
 
 void MotorSensorController::calMoveMotor(const String& runTimeStr, const String& axis) {
-    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         if (!calMode) {
             xSemaphoreGive(_calMutex);
             Serial.println("Calibration mode OFF; ignoring calMove request.");
@@ -1518,7 +1863,7 @@ void MotorSensorController::calMoveMotor(const String& runTimeStr, const String&
 
 void MotorSensorController::calibrate_elevation() {
     if (calMode) {
-        float tareAngle = getAvgAngle(_el_hall_i2c_addr);
+        float tareAngle = readFilteredAngle(_el_hall_i2c_addr, _el);
         setElStartAngle(tareAngle);
         Serial.println("EL CAL DONE");
     }
@@ -1527,54 +1872,68 @@ void MotorSensorController::calibrate_elevation() {
 void MotorSensorController::handleCalibrationMode() {
     int calRunTime = 0;
     String calAxis = "";
-    
-    if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+    int calState = 0;
+    unsigned long calMoveStartTime = 0;
+
+    // Read all calibration state under mutex
+    if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         calRunTime = _calRunTime;
         calAxis = _calAxis;
+        calState = _calState;
+        calMoveStartTime = _calMoveStartTime;
         xSemaphoreGive(_calMutex);
     }
-    
-    if (_calState == 0) {
+
+    if (calState == 0) {
         if (abs(calRunTime) > 0 && calAxis != "") {
-            _calMoveStartTime = millis();
-            _calState = 1;
+            if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                _calMoveStartTime = millis();
+                _calState = 1;
+                xSemaphoreGive(_calMutex);
+            }
         } else {
             analogWrite(_pwm_pin_az, 255);
             analogWrite(_pwm_pin_el, 255);
             digitalWrite(_pwm_pin_az, 1);
             digitalWrite(_pwm_pin_el, 1);
         }
-    } else if (_calState == 1) {
+    } else if (calState == 1) {
         int directionPin, pwmPin;
-        
+        bool invert = false;
+
         if (calAxis.equalsIgnoreCase("AZ")) {
             directionPin = _ccw_pin_az;
             pwmPin = _pwm_pin_az;
+            invert = _azCfg.invertDir;
         } else if (calAxis.equalsIgnoreCase("EL")) {
             directionPin = _ccw_pin_el;
             pwmPin = _pwm_pin_el;
+            invert = _elCfg.invertDir;
         } else {
-            _logger.error("Invalid calibration axis: " + _calAxis);
-            _calRunTime = 0;
-            _calAxis = "";
-            _calState = 0;
-            return;
-        }
-        
-        digitalWrite(directionPin, calRunTime > 0);
-        analogWrite(pwmPin, 0);
-
-        unsigned long elapsedTime = millis() - _calMoveStartTime;
-        if (elapsedTime > abs(calRunTime)) {
-            analogWrite(_pwm_pin_az, 255);
-            analogWrite(_pwm_pin_el, 255);
-            
-            if (_calMutex != NULL && xSemaphoreTake(_calMutex, portMAX_DELAY) == pdTRUE) {
+            _logger.error("Invalid calibration axis: " + calAxis);
+            if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 _calRunTime = 0;
                 _calAxis = "";
+                _calState = 0;
                 xSemaphoreGive(_calMutex);
             }
-            _calState = 0;
+            return;
+        }
+
+        digitalWrite(directionPin, (calRunTime > 0) ^ invert);
+        analogWrite(pwmPin, 0);
+
+        unsigned long elapsedTime = millis() - calMoveStartTime;
+        if (elapsedTime > (unsigned long)abs(calRunTime)) {
+            analogWrite(_pwm_pin_az, 255);
+            analogWrite(_pwm_pin_el, 255);
+
+            if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                _calRunTime = 0;
+                _calAxis = "";
+                _calState = 0;
+                xSemaphoreGive(_calMutex);
+            }
         }
     }
 }
@@ -1639,13 +1998,13 @@ void MotorSensorController::slowPrint(const String& message, int messageID) {
 
 void MotorSensorController::updateI2CErrorCounter(int i2c_addr) {
     if (i2c_addr == _az_hall_i2c_addr) {
-        _consecutivei2cErrors_az++;
-        if (_consecutivei2cErrors_az >= MAX_CONSECUTIVE_ERRORS) {
+        if (_az.consecutiveI2cErrors < 255) _az.consecutiveI2cErrors++;
+        if (_az.consecutiveI2cErrors >= MAX_CONSECUTIVE_ERRORS) {
             i2cErrorFlag_az = true;
         }
     } else if (i2c_addr == _el_hall_i2c_addr) {
-        _consecutivei2cErrors_el++;
-        if (_consecutivei2cErrors_el >= MAX_CONSECUTIVE_ERRORS) {
+        if (_el.consecutiveI2cErrors < 255) _el.consecutiveI2cErrors++;
+        if (_el.consecutiveI2cErrors >= MAX_CONSECUTIVE_ERRORS) {
             i2cErrorFlag_el = true;
         }
     }
@@ -1653,18 +2012,25 @@ void MotorSensorController::updateI2CErrorCounter(int i2c_addr) {
 
 void MotorSensorController::resetI2CErrorCounter(int i2c_addr) {
     if (i2c_addr == _az_hall_i2c_addr) {
-        _consecutivei2cErrors_az = 0;
+        _az.consecutiveI2cErrors = 0;
     } else if (i2c_addr == _el_hall_i2c_addr) {
-        _consecutivei2cErrors_el = 0;
+        _el.consecutiveI2cErrors = 0;
     }
 }
 
-int MotorSensorController::convertPercentageToSpeed(float percentage) {
-    return (int)((1 - (percentage / 100.0)) * MIN_AZ_SPEED);
+void MotorSensorController::forceStopMs(unsigned long ms) {
+    _forceStopUntil = millis() + ms;
+    analogWrite(_pwm_pin_az, 255);
+    analogWrite(_pwm_pin_el, 255);
 }
 
-int MotorSensorController::convertSpeedToPercentage(float speed) {
-    return (int)(100 * (1 - (speed / MIN_AZ_SPEED)));
+int MotorSensorController::convertPercentageToSpeed(float percentage, int minSpeed) {
+    return (int)((1 - (percentage / 100.0)) * minSpeed);
+}
+
+int MotorSensorController::convertSpeedToPercentage(float speed, int minSpeed) {
+    if (minSpeed == 0) return 0;
+    return (int)(100 * (1 - (speed / minSpeed)));
 }
 
 void MotorSensorController::playOdeToJoy() {
@@ -1717,3 +2083,166 @@ void MotorSensorController::playOdeToJoy() {
     
     _logger.info("Ode to Joy finished");
 }
+
+// =============================================================================
+// SMOOTH TRACKING METHODS (Kalman filter)
+// =============================================================================
+
+void MotorSensorController::setSmoothTrackingEnabled(bool enabled) {
+    bool wasEnabled = _smoothTrackingEnabled.load();
+    _smoothTrackingEnabled = enabled;
+    _preferences.putBool("smoothTrack", enabled);
+
+    if (wasEnabled != enabled) {
+        resetSmoothTracking();
+        _az.errorIntegral = 0.0;
+        _az.prevRawError = 0.0;
+        _az.filteredDTerm = 0.0;
+        _az.prevPidOutput = 0.0;
+        _el.errorIntegral = 0.0;
+        _el.prevRawError = 0.0;
+        _el.filteredDTerm = 0.0;
+        _el.prevPidOutput = 0.0;
+        _isAzMotorLatched = false;
+        _isElMotorLatched = false;
+    }
+    _logger.info("Smooth tracking " + String(enabled ? "enabled" : "disabled"));
+}
+
+void MotorSensorController::resetSmoothTracking() {
+    _kalmanAz = KalmanState();
+    _kalmanEl = KalmanState();
+}
+
+void MotorSensorController::kalmanPredict(KalmanState& kf, float dt, bool isAzimuth) {
+    if (!kf.initialized) return;
+
+    // Decay velocity if no measurement updates received recently
+    // Prevents drift when target stops (setpoint unchanged = no updates)
+    unsigned long now = millis();
+    if (kf.lastUpdateMs > 0) {
+        unsigned long elapsed = now - kf.lastUpdateMs;
+        if (elapsed > KALMAN_VEL_DECAY_MS) {
+            float decayAlpha = 1.0f - expf(-dt / KALMAN_VEL_DECAY_TAU);
+            kf.vel *= (1.0 - decayAlpha);
+        }
+    }
+
+    // State prediction: constant velocity model
+    kf.pos += kf.vel * dt;
+
+    kalmanClampBounds(kf, isAzimuth);
+
+    // Covariance prediction: P = F*P*F' + Q
+    // F = [[1, dt], [0, 1]], Q_discrete = q * [[dt³/3, dt²/2], [dt²/2, dt]]
+    double q = _kalmanQ;
+    double dt2 = dt * dt;
+    double dt3 = dt2 * dt;
+    double new_p00 = kf.p00 + dt * (kf.p10 + kf.p01 + dt * kf.p11) + q * dt3 / 3.0;
+    double new_p01 = kf.p01 + dt * kf.p11 + q * dt2 / 2.0;
+    double new_p10 = kf.p10 + dt * kf.p11 + q * dt2 / 2.0;
+    double new_p11 = kf.p11 + q * dt;
+
+    kf.p00 = new_p00;
+    kf.p01 = new_p01;
+    kf.p10 = new_p10;
+    kf.p11 = new_p11;
+}
+
+void MotorSensorController::kalmanUpdate(KalmanState& kf, float measurement, bool isAzimuth, float rOverride) {
+    if (!kf.initialized) {
+        kf.pos = measurement;
+        kf.vel = 0.0;
+        kf.p00 = 1.0;
+        kf.p01 = 0.0;
+        kf.p10 = 0.0;
+        kf.p11 = 1.0;
+        kf.lastUpdateMs = millis();
+        kf.initialized = true;
+        return;
+    }
+
+    // Innovation with wraparound handling for azimuth
+    double innovation = (double)measurement - kf.pos;
+    if (isAzimuth) {
+        while (innovation > 180.0) innovation -= 360.0;
+        while (innovation < -180.0) innovation += 360.0;
+    }
+
+    // Large jump detection — reinitialize filter (new target selected)
+    if (fabs(innovation) > KALMAN_JUMP_THRESHOLD) {
+        kf.pos = measurement;
+        kf.vel = 0.0;
+        kf.p00 = 1.0;
+        kf.p01 = 0.0;
+        kf.p10 = 0.0;
+        kf.p11 = 1.0;
+        kf.lastUpdateMs = millis();
+        return;
+    }
+
+    // Innovation covariance: S = H*P*H' + R = p00 + R
+    double r = (rOverride > 0.0f) ? (double)rOverride : (double)_kalmanR;
+    double s = kf.p00 + r;
+
+    // Kalman gain: K = P*H'/S
+    double k0 = kf.p00 / s;  // position gain
+    double k1 = kf.p10 / s;  // velocity gain
+
+    // State update
+    kf.pos += k0 * innovation;
+    kf.vel += k1 * innovation;
+
+    kalmanClampBounds(kf, isAzimuth);
+
+    // Covariance update: P = (I - K*H) * P
+    double new_p00 = kf.p00 - k0 * kf.p00;
+    double new_p01 = kf.p01 - k0 * kf.p01;
+    double new_p10 = kf.p10 - k1 * kf.p00;
+    double new_p11 = kf.p11 - k1 * kf.p01;
+
+    kf.p00 = new_p00;
+    kf.p01 = new_p01;
+    kf.p10 = new_p10;
+    kf.p11 = new_p11;
+
+    // Only update timestamp for real measurements (not synthetic convergence)
+    if (rOverride < 0.0f) {
+        kf.lastUpdateMs = millis();
+    }
+}
+
+void MotorSensorController::kalmanClampBounds(KalmanState& kf, bool isAzimuth) {
+    if (isAzimuth) {
+        // AZ: wrap to [0, 360), but clamp to [-360, 720] to respect needs_unwind range
+        // The error calculation in angle_shortest_error_az handles the actual ±360 logic
+        while (kf.pos >= 360.0) kf.pos -= 360.0;
+        while (kf.pos < 0.0) kf.pos += 360.0;
+    } else {
+        // EL: hard clamp to valid elevation range, zero velocity at bounds
+        float minEl = _extendedElEnabled.load() ? -90.0f : 0.0f;
+        float maxEl = 90.0f;
+        if (kf.pos > maxEl) {
+            kf.pos = maxEl;
+            if (kf.vel > 0.0) kf.vel = 0.0;
+        } else if (kf.pos < minEl) {
+            kf.pos = minEl;
+            if (kf.vel < 0.0) kf.vel = 0.0;
+        }
+    }
+}
+
+// Smooth tracking parameter setters
+void MotorSensorController::setKalmanQ(float v) {
+    if (v >= 0.01f && v <= 100.0f) { _kalmanQ = v; _preferences.putFloat("smKalQ", v); _logger.info("Kalman Q set to: " + String(v)); }
+}
+void MotorSensorController::setKalmanR(float v) {
+    if (v >= 0.01f && v <= 100.0f) { _kalmanR = v; _preferences.putFloat("smKalR", v); _logger.info("Kalman R set to: " + String(v)); }
+}
+void MotorSensorController::setMinSmoothAzSpeed(int v) {
+    if (v >= 0 && v <= 255) { MIN_SMOOTH_AZ_SPEED = v; _preferences.putInt("smMinAzSpd", v); _logger.info("smMinAzSpd set to: " + String(v)); }
+}
+void MotorSensorController::setMinSmoothElSpeed(int v) {
+    if (v >= 0 && v <= 255) { MIN_SMOOTH_EL_SPEED = v; _preferences.putInt("smMinElSpd", v); _logger.info("smMinElSpd set to: " + String(v)); }
+}
+

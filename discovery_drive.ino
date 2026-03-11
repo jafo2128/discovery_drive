@@ -79,7 +79,7 @@ void setup() {
 
   // Initialize i2c
   Wire.begin(_SDA_PIN, _SCL_PIN); //Start i2C  
-	Wire.setClock(100000L); //fast clock // Signal integrity may be more important for this application
+	Wire.setClock(250000L); // 250kHz
   Wire.setTimeOut(3000); // 3 second timeout for I2C operations
 
   // Init logger
@@ -92,6 +92,12 @@ void setup() {
   rotctlWifi.begin();
   // Begin web server
   webServerManager.begin();
+  // Create shared I2C bus mutex — prevents bus contention between
+  // ControlMotors (AS5600 sensors) and ReadPowerSensor (INA219)
+  SemaphoreHandle_t i2cMutex = xSemaphoreCreateMutex();
+  motorSensorCtrl.setI2CMutex(i2cMutex);
+  ina219Manager.setI2CMutex(i2cMutex);
+
   // Initialize motor controller and home
   motorSensorCtrl.begin();
   // Initialize INA219 current sensor
@@ -117,7 +123,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     ReadPowerSensor
     ,  "Read Power Sensor"
-    ,  2048
+    ,  4096  // 2048 was tight for I2C mutex + Adafruit lib + averaging
     ,  NULL
     ,  1  // Priority
     ,  NULL
@@ -162,7 +168,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     SafetyMonitor
     ,  "Safety Monitor"
-    ,  2048
+    ,  4096  // 2048 was too tight for String ops + mutex + logger calls
     ,  NULL
     ,  2  // Max priority to safety monitor thread
     ,  NULL
@@ -219,7 +225,7 @@ void HandleWebRequests(void *pvParameters) {
 
 void ControlMotors(void *pvParameters){
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = 25 / portTICK_PERIOD_MS;
+  const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
   for(;;)
   {
     motorSensorCtrl.runControlLoop();

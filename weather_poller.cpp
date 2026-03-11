@@ -252,7 +252,7 @@ bool WeatherPoller::processWeatherResponse(const String& payload) {
         bool forecastOk = extractForecastWeather(doc);
         
         if (currentOk || forecastOk) {
-            if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+            if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 _weatherData.dataValid = true;
                 _weatherData.errorMessage = "";
                 xSemaphoreGive(_weatherDataMutex);
@@ -353,7 +353,7 @@ void WeatherPoller::setEmergencyStowState(bool active, const String& reason) {
         stowDirection = calculateOptimalStowDirection(data.currentWindDirection);
     }
     
-    if (_windSafetyMutex != NULL && xSemaphoreTake(_windSafetyMutex, portMAX_DELAY) == pdTRUE) {
+    if (_windSafetyMutex != NULL && xSemaphoreTake(_windSafetyMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         bool wasActive = _windSafetyData.emergencyStowActive;
         
         _windSafetyData.emergencyStowActive = active;
@@ -401,7 +401,7 @@ float WeatherPoller::getWindBasedHomePosition() {
 WindSafetyData WeatherPoller::getWindSafetyData() {
     WindSafetyData data;
     
-    if (_windSafetyMutex != NULL && xSemaphoreTake(_windSafetyMutex, portMAX_DELAY) == pdTRUE) {
+    if (_windSafetyMutex != NULL && xSemaphoreTake(_windSafetyMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         data = _windSafetyData;
         xSemaphoreGive(_windSafetyMutex);
     }
@@ -478,7 +478,7 @@ bool WeatherPoller::extractCurrentWeather(JsonDocument& doc) {
     
     JsonObject current = doc["current"];
     
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         // Extract current weather values with validation
         _weatherData.currentWindSpeed = validateWindSpeed(current["wind_kph"]);
         _weatherData.currentWindDirection = validateWindDirection(current["wind_degree"]);
@@ -636,7 +636,7 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
     }
     
     // Quick atomic update of shared data
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         for (int i = 0; i < 3; i++) {
             if (i < forecastCount) {
                 _weatherData.forecastTimes[i] = localForecast[i].time;
@@ -661,7 +661,7 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
 }
 
 void WeatherPoller::clearWeatherData() {
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         // Clear all data and explicitly reset strings to free memory
         _weatherData.currentWindSpeed = 0.0;
         _weatherData.currentWindGust = 0.0;
@@ -684,7 +684,7 @@ void WeatherPoller::clearWeatherData() {
 }
 
 void WeatherPoller::setErrorState(const String& error) {
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _weatherData.errorMessage = error;
         _weatherData.dataValid = false;
         xSemaphoreGive(_weatherDataMutex);
@@ -729,7 +729,7 @@ bool WeatherPoller::setApiKey(const String& apiKey) {
         return false;
     }
     
-    if (_apiKeyMutex != NULL && xSemaphoreTake(_apiKeyMutex, portMAX_DELAY) == pdTRUE) {
+    if (_apiKeyMutex != NULL && xSemaphoreTake(_apiKeyMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _apiKey = trimmedKey;
         xSemaphoreGive(_apiKeyMutex);
     }
@@ -758,7 +758,7 @@ float WeatherPoller::getLongitude() {
 
 String WeatherPoller::getApiKey() {
     String key = "";
-    if (_apiKeyMutex != NULL && xSemaphoreTake(_apiKeyMutex, portMAX_DELAY) == pdTRUE) {
+    if (_apiKeyMutex != NULL && xSemaphoreTake(_apiKeyMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         key = _apiKey;
         xSemaphoreGive(_apiKeyMutex);
     }
@@ -787,7 +787,7 @@ bool WeatherPoller::isFullyConfigured() {
 WeatherData WeatherPoller::getWeatherData() {
     WeatherData data;
     
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         data = _weatherData;
         xSemaphoreGive(_weatherDataMutex);
     }
@@ -798,7 +798,7 @@ WeatherData WeatherPoller::getWeatherData() {
 bool WeatherPoller::isDataValid() {
     bool valid = false;
     
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         valid = _weatherData.dataValid;
         xSemaphoreGive(_weatherDataMutex);
     }
@@ -809,7 +809,7 @@ bool WeatherPoller::isDataValid() {
 String WeatherPoller::getLastError() {
     String error = "";
     
-    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, portMAX_DELAY) == pdTRUE) {
+    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         error = _weatherData.errorMessage;
         xSemaphoreGive(_weatherDataMutex);
     }

@@ -253,11 +253,12 @@ float SerialManager::validateAndCleanAzimuth(float az) {
 
 float SerialManager::validateAndCleanElevation(float el) {
     if (isnan(el)) el = 0;
-    
-    // Clamp elevation to 0-90 range
-    if (el < 0) el = 0;
+
+    // Clamp elevation respecting extended elevation mode
+    float minEl = _motorSensorCtrl.isExtendedElEnabled() ? -90.0f : 0.0f;
+    if (el < minEl) el = minEl;
     if (el > 90) el = 90;
-    
+
     return el;
 }
 
@@ -298,10 +299,10 @@ void SerialManager::printStatusInfo() {
     Serial.println("Tolerance AZ: " + String(_motorSensorCtrl.getMinAzTolerance(), 3) + "°");
     Serial.println("Tolerance EL: " + String(_motorSensorCtrl.getMinElTolerance(), 3) + "°");
     Serial.println("Single Motor Mode: " + String(_motorSensorCtrl.singleMotorMode ? "ON" : "OFF"));
-    Serial.println("Max Dual Motor AZ Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_dual_motor_az_speed)) + "%");
-    Serial.println("Max Dual Motor EL Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_dual_motor_el_speed)) + "%");
-    Serial.println("Max Single Motor AZ Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_single_motor_az_speed)) + "%");
-    Serial.println("Max Single Motor EL Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_single_motor_el_speed)) + "%");
+    Serial.println("Max Dual Motor AZ Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_dual_motor_az_speed, _motorSensorCtrl.MIN_AZ_SPEED)) + "%");
+    Serial.println("Max Dual Motor EL Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_dual_motor_el_speed, _motorSensorCtrl.MIN_EL_SPEED)) + "%");
+    Serial.println("Max Single Motor AZ Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_single_motor_az_speed, _motorSensorCtrl.MIN_AZ_SPEED)) + "%");
+    Serial.println("Max Single Motor EL Speed: " + String(_motorSensorCtrl.convertSpeedToPercentage((float)_motorSensorCtrl.max_single_motor_el_speed, _motorSensorCtrl.MIN_EL_SPEED)) + "%");
     
     // === ADVANCED PARAMETERS ===
     Serial.println("--- Advanced Parameters ---");
@@ -311,7 +312,9 @@ void SerialManager::printStatusInfo() {
     Serial.println("MIN_AZ_SPEED: " + String(_motorSensorCtrl.getMinAzSpeed()));
     Serial.println("MIN_AZ_TOLERANCE: " + String(_motorSensorCtrl.getMinAzTolerance(), 3) + "°");
     Serial.println("MIN_EL_TOLERANCE: " + String(_motorSensorCtrl.getMinElTolerance(), 3) + "°");
-    Serial.println("MAX_FAULT_POWER: " + String(_motorSensorCtrl.getMaxPowerBeforeFault()) + "W");
+    Serial.println("MAX_FAULT_POWER_AZ: " + String(_motorSensorCtrl.getMaxPowerFaultAz()) + "W");
+    Serial.println("MAX_FAULT_POWER_EL: " + String(_motorSensorCtrl.getMaxPowerFaultEl()) + "W");
+    Serial.println("MAX_FAULT_POWER_TOTAL: " + String(_motorSensorCtrl.getMaxPowerFaultTotal()) + "W");
     
     // === NETWORK CONFIGURATION ===
     Serial.println("--- Network Configuration ---");

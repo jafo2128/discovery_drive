@@ -1,23 +1,4 @@
 <!DOCTYPE HTML>
-
-<!--
- * Firmware for the discovery-drive satellite dish rotator.
- * index.html - HTML page for the web UI.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
--->
-
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -35,24 +16,41 @@
 
   <div class="section-box">
     <h2>Manual Azimuth/Elevation Control</h2>
-    <!-- Flex container to position form and canvas side by side -->
-    <div class="control-container az-el-container"> <!-- Added unique class "az-el-container" -->
-      <!-- The form for input -->
+    <div class="control-container az-el-container">
       <form id="az-el-form" action="/update_variable" method="POST" onsubmit="return updateVariable();">
         <label for="new_setpoint_az">Set Azimuth (-360 - 360):</label>
         <input type="decimal" id="new_setpoint_az" name="new_setpoint_az" step="0.01" value="0.00">
-        <p id="error_message_az" style="color: red;"></p>
-        <label for="new_setpoint_el">Set Elevation (0 - 90):</label>
+        <p class="error-text" id="error_message_az"></p>
+        <label for="new_setpoint_el" id="elSetpointLabel">Set Elevation (0 - 90):</label>
         <input type="decimal" id="new_setpoint_el" name="new_setpoint_el" step="0.01" value="0.00">
-        <p id="error_message_el" style="color: red;"></p>
-        <!-- Button container to align them side by side -->
+        <p class="error-text" id="error_message_el"></p>
         <div class="button-container">
           <input type="submit" value="Submit">
           <button type="button" onclick="submitHome()">Home</button>
+          <button type="button" onclick="stopMotors()" class="stop-btn">STOP</button>
         </div>
       </form>
-      <!-- Canvas element for the AZ-EL skyplane -->
       <canvas id="skyplaneCanvas" width="350" height="350"></canvas>
+    </div>
+
+    <label>Nudge AZ:</label>
+    <div class="button-container">
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', -10)">-10</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', -1)">-1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', -0.1)">-0.1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', 0.1)">+0.1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', 1)">+1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('az', 10)">+10</button>
+    </div>
+
+    <label>Nudge EL:</label>
+    <div class="button-container">
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', -10)">-10</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', -1)">-1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', -0.1)">-0.1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', 0.1)">+0.1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', 1)">+1</button>
+      <button type="button" class="nudge-btn" onclick="nudgeSetpoint('el', 10)">+10</button>
     </div>
   </div>
 
@@ -132,6 +130,14 @@
         <td><span id="isElMotorLatched">Loading...</span></td>
       </tr>
       <tr>
+        <td>AZ Motor Speed</td>
+        <td><span id="motorSpeedPctAz">Loading...</span>%</td>
+      </tr>
+      <tr>
+        <td>EL Motor Speed</td>
+        <td><span id="motorSpeedPctEl">Loading...</span>%</td>
+      </tr>
+      <tr>
         <td>Serial Active</td>
         <td><span id="serialActive">Loading...</span></td>
       </tr>
@@ -172,6 +178,22 @@
         <td>Wind Tracking Status</td>
         <td><span id="windTrackingStatus">Loading...</span></td>
       </tr>
+      <tr>
+        <td>Direction Lock</td>
+        <td><span id="directionLockStatus">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Smooth Tracking</td>
+        <td><span id="smoothTrackingActive">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Kalman AZ Vel</td>
+        <td><span id="kalmanAzVel">-</span></td>
+      </tr>
+      <tr>
+        <td>Kalman EL Vel</td>
+        <td><span id="kalmanElVel">-</span></td>
+      </tr>
     </table>
 
     <h3>Debug Level Control</h3>
@@ -206,8 +228,6 @@
       </select>
     </form>
 
-    <br/>
-
     <label>Disable Serial Error Output:</label>
     <p>
       <label class="switch">
@@ -216,9 +236,6 @@
       </label>
     </p>
 
-    <br/>
-
-    <!-- Error Messages Section -->
     <div class="error-messages-section">
       <h3>System Messages</h3>
       <div class="error-messages-container">
@@ -227,8 +244,6 @@
         <textarea id="errorMessages" readonly placeholder="No system messages..."></textarea>
       </div>
     </div>
-
-    <br/>
   </div>
 
   <div class="section-box">
@@ -289,7 +304,6 @@
       <label for='password'>Password:</label>
       <input type='text' id='password' name='password'>
 
-      <!-- Hotspot mode checkbox -->
       <label for='hotspot'>Activate Hotspot Mode:</label>
 
       <p>
@@ -320,7 +334,6 @@
         <div id='bar4' class='bar bar4'></div>
       </div>
     </div>
-    <br />
     <table>
       <tr>
         <th>Parameter</th>
@@ -347,7 +360,6 @@
         <td><span id="wifi_channel">Loading...</span></td>
       </tr>
     </table>
-    <br />
   </div>
 
   <div class="section-box">
@@ -364,16 +376,7 @@
         <td>Cal Mode</td>
         <td><span id="calMode">Loading...</span></td>
       </tr>
-      <tr>
-        <td>Azimuth Angle Offset</td>
-        <td><span id="azOffset">Loading...</span>°</td>
-      </tr>
-      <tr>
-        <td>Elevation Angle Offset</td>
-        <td><span id="elOffset">Loading...</span>°</td>
-      </tr>
     </table>
-    <br />
 
     <label>Activate Calibration Mode:</label>
     <p>
@@ -382,19 +385,6 @@
         <span class="slider"></span>
       </label>
     </p>
-
-    <h3>Angle Offsets</h3>
-    <p>Use these offsets to correct for systematic angle errors. Positive values increase the reported angle.</p>
-    
-    <form action='/setAngleOffsets' method='POST'>
-      <label for='azOffset'>Azimuth Offset (±180°):</label>
-      <input type='number' id='azOffsetInput' name='azOffset' min='-180' max='180' step='0.001' placeholder='0.000'>
-      
-      <label for='elOffset'>Elevation Offset (±5°):</label>
-      <input type='number' id='elOffsetInput' name='elOffset' min='-5' max='5' step='0.001' placeholder='0.000'>
-      
-      <input type='submit' value='Set Angle Offsets'>
-    </form>
 
     <h3>Manual Motor Movement</h3>
     <p><strong>Warning:</strong> Only use these controls when calibration mode is active!</p>
@@ -421,11 +411,38 @@
     <p>
       <button onclick="calEl()">Tare Elevation</button>
     </p>
-    <br />
+
+    <h3>Angle Offsets</h3>
+    <p>Use these offsets to correct for systematic angle errors. Positive values increase the reported angle.</p>
+
+    <table>
+      <tr>
+        <th>Parameter</th>
+        <th>Value</th>
+      </tr>
+      <tr>
+        <td>Azimuth Angle Offset</td>
+        <td><span id="azOffset">Loading...</span>°</td>
+      </tr>
+      <tr>
+        <td>Elevation Angle Offset</td>
+        <td><span id="elOffset">Loading...</span>°</td>
+      </tr>
+    </table>
+
+    <form action='/setAngleOffsets' method='POST'>
+      <label for='azOffset'>Azimuth Offset (±180°):</label>
+      <input type='number' id='azOffsetInput' name='azOffset' min='-180' max='180' step='0.001' placeholder='0.000'>
+
+      <label for='elOffset'>Elevation Offset (±5°):</label>
+      <input type='number' id='elOffsetInput' name='elOffset' min='-5' max='5' step='0.001' placeholder='0.000'>
+
+      <input type='submit' value='Set Angle Offsets'>
+    </form>
   </div>
 
   <div class="section-box">
-    <h2>Motor Settings</h2>
+    <h2>Motor and Movement Settings</h2>
     <p>If you have heavy power budget limitations, you can limit the max speed. Note that this naturally limits the max torque. Max speed restrictions only apply when both motors are moving.</p>
     <p>Dual Motor Max Speed: The maximum speed the motors should run at when both motors are used at the same time </p>
     <p>Single Motor Max Speed: The maximum speed the motors should run at when used in single motor mode, or when in dual motor mode, but one motor is not running</p>
@@ -485,6 +502,71 @@
         <span class="slider"></span>
       </label>
     </p>
+
+    <label>Enable Negative Elevation (-90 to 90):</label>
+    <p><strong>WARNING:</strong> Setting a negative elevation could jam your rotator if a dish or other large antenna is attached. Make sure that your attached antenna or device will not impact the rotator body during negative elevation.</p>
+    <p>
+      <label class="switch">
+        <input type="checkbox" id="extendedElToggle" onchange="toggleExtendedEl()" %var_extendedEl_checked%>
+        <span class="slider"></span>
+      </label>
+    </p>
+
+    <label>Auto-Home (return to home when idle):</label>
+    <p>Automatically returns the dish to its home position after no setpoints have been received for the configured timeout. If wind-based home is enabled, it will home to the wind-safe position instead of (0, 0).</p>
+    <p>
+      <label class="switch">
+        <input type="checkbox" id="autoHomeToggle" onchange="toggleAutoHome()" %var_autoHome_checked%>
+        <span class="slider"></span>
+      </label>
+    </p>
+
+    <table>
+      <tr>
+        <th>Parameter</th>
+        <th>Value</th>
+        <th>Default</th>
+      </tr>
+      <tr>
+        <td>Auto-Home</td>
+        <td><span id="autoHomeEnabled">Loading...</span></td>
+        <td>OFF</td>
+      </tr>
+      <tr>
+        <td>Auto-Home Timeout</td>
+        <td><span id="autoHomeMins">Loading...</span> minutes</td>
+        <td>3 minutes</td>
+      </tr>
+    </table>
+
+    <form action='/setAdvancedParams' method='POST'>
+      <label for='autoHomeMins'>Auto-Home Timeout (minutes, 1-60):</label>
+      <input type='number' id='autoHomeMins_input' name='autoHomeMins' min='1' max='60' step='1' placeholder='3'>
+      <input type='submit' value='Set Auto-Home Timeout'>
+    </form>
+
+    <label>Smooth Tracking (Kalman filter):</label>
+    <p><strong>NOTE:</strong> Smooth tracking uses a Kalman filter to interpolate setpoints between updates, reducing jerky movement. Reduces output torque (MIN_SMOOTH speeds) — only usable for low-torque situations (e.g. cameras). During wind stow, full torque is automatically restored.</p>
+    <p>
+      <label class="switch">
+        <input type="checkbox" id="smoothTrackingToggle" onchange="toggleSmoothTracking()" %var_smoothTracking_checked%>
+        <span class="slider"></span>
+      </label>
+    </p>
+
+    <table>
+      <tr>
+        <th>Parameter</th>
+        <th>Value</th>
+        <th>Default</th>
+      </tr>
+      <tr>
+        <td>Smooth Tracking</td>
+        <td><span id="smoothTrackingEnabled">Loading...</span></td>
+        <td>OFF</td>
+      </tr>
+    </table>
+
   </div>
 
   <div class="section-box">
@@ -518,7 +600,6 @@
         <td>Disconnected</td>
       </tr>
     </table>
-    <br/>
 
     <label>Stellarium Polling:</label>
     <p>
@@ -536,15 +617,14 @@
       <input type='submit' value='Submit'>
     </form>
   </div>
-  
-  
+
   <div class="section-box">
     <h2>Weather Information & Wind Monitoring</h2>
     <p>Monitor current wind conditions and forecasts to optimize dish positioning and safety.</p>
     <p><strong>Powered by WeatherAPI.com</strong> - Requires a free API key from <a href="https://www.weatherapi.com/" target="_blank">weatherapi.com</a></p>
-    
+
     <h3>Wind Safety Configuration</h3>
-    <table style="margin-bottom: 20px;">
+    <table>
       <tr>
         <th>Parameter</th>
         <th>Value</th>
@@ -601,19 +681,17 @@
     <form action='/setWindThresholds' method='POST'>
       <label for='windSpeedThreshold'>Wind Speed Threshold (km/h):</label>
       <input type='number' id='windSpeedThresholdInput' name='windSpeedThreshold' min='10' max='200' step='1' placeholder='50'>
-      
+
       <label for='windGustThreshold'>Wind Gust Threshold (km/h):</label>
       <input type='number' id='windGustThresholdInput' name='windGustThreshold' min='10' max='200' step='1' placeholder='60'>
-      
+
       <input type='submit' value='Set Wind Thresholds'>
     </form>
 
-    <div id="windStowAlert" style="color: red; font-weight: bold; margin: 10px 0; display: none;">
+    <div id="windStowAlert" class="alert-box">
       <span id="windStowMessage"></span>
     </div>
 
-    <br/>
-    
     <table>
       <tr>
         <th>Parameter</th>
@@ -658,7 +736,7 @@
     </table>
 
     <h3>Configuration</h3>
-    
+
     <form action='/setWeatherApiKey' method='POST'>
       <label for='weatherApiKey'>WeatherAPI.com API Key:</label>
       <input type='text' id='weatherApiKey' name='weatherApiKey' placeholder='Enter your API key from weatherapi.com' maxlength='64'>
@@ -668,16 +746,14 @@
     <form action='/setWeatherLocation' method='POST'>
       <label for='latitude'>Latitude (decimal degrees):</label>
       <input type='number' id='latitude' name='latitude' step='0.000001' min='-90' max='90' placeholder='e.g. 40.7128'>
-      
+
       <label for='longitude'>Longitude (decimal degrees):</label>
       <input type='number' id='longitude' name='longitude' step='0.000001' min='-180' max='180' placeholder='e.g. -74.0060'>
-      
+
       <input type='submit' value='Set Location'>
     </form>
 
     <button type="button" onclick="getMyLocation()">Use My Location</button>
-
-    <br/>
 
     <label>Enable Weather Polling:</label>
     <p>
@@ -750,14 +826,12 @@
       </tr>
     </table>
 
-    <div id="weatherErrorDiv" style="color: red; font-weight: bold; margin: 10px 0; display: none;">
+    <div id="weatherErrorDiv" class="alert-box">
       <span id="weatherError"></span>
     </div>
 
-    <br/>
     <p><strong>Note:</strong> Get your free API key from <a href="https://www.weatherapi.com/signup.aspx" target="_blank">WeatherAPI.com</a>. Free tier includes 1 million calls per month.</p>
   </div>
-  
 
   <div class="section-box">
     <h2>ESP32 Control Panel & Security</h2>
@@ -787,11 +861,9 @@
       <input type='submit' value='Submit'>
     </form>
 
-    <button type="button" onclick="confirmRestartESP32()" style="background-color: #dc3545;">Restart ESP32</button>
-
-    <button type="button" onclick="confirmResetNeedsUnwind()" style="background-color: #dc3545;">Reset Needs Unwind</button>
-
-    <button type="button" onclick="confirmResetEEPROM()" style="background-color: #dc3545;">Reset EEPROM</button>
+    <button type="button" onclick="confirmRestartESP32()" class="danger-btn">Restart ESP32</button>
+    <button type="button" onclick="confirmResetNeedsUnwind()" class="danger-btn">Reset Needs Unwind</button>
+    <button type="button" onclick="confirmResetEEPROM()" class="danger-btn">Reset EEPROM</button>
   </div>
 
   <div class="section-box">
@@ -804,7 +876,6 @@
       <button type="submit">Go to OTA Update Page</button>
     </form>
 
-    <br/>
     <p><strong>Warning:</strong> Firmware updates will restart the device. Web file updates take effect immediately.</p>
   </div>
 
@@ -820,7 +891,7 @@
         </label>
       </p>
 
-      <div id="advancedParamsSection" style="display: none;">
+      <div id="advancedParamsSection" style="display:none">
         <table>
           <tr>
             <th>Parameter</th>
@@ -831,14 +902,38 @@
           <tr>
             <td>P_el (Elevation P-Gain)</td>
             <td><span id="P_el">Loading...</span></td>
-            <td>-1000-1000</td>
+            <td>0-1000</td>
             <td>Proportional gain for elevation motor control. Default: 100</td>
+          </tr>
+          <tr>
+            <td>I_el (Elevation I-Gain)</td>
+            <td><span id="I_el">Loading...</span></td>
+            <td>0-1000</td>
+            <td>Integral gain for elevation motor. Corrects steady-state error. Default: 0</td>
+          </tr>
+          <tr>
+            <td>D_el (Elevation D-Gain)</td>
+            <td><span id="D_el">Loading...</span></td>
+            <td>0-1000</td>
+            <td>Derivative gain for elevation motor. Reduces overshoot. Default: 0</td>
           </tr>
           <tr>
             <td>P_az (Azimuth P-Gain)</td>
             <td><span id="P_az">Loading...</span></td>
-            <td>-1000-1000</td>
+            <td>0-1000</td>
             <td>Proportional gain for azimuth motor control. Default: 5</td>
+          </tr>
+          <tr>
+            <td>I_az (Azimuth I-Gain)</td>
+            <td><span id="I_az">Loading...</span></td>
+            <td>0-1000</td>
+            <td>Integral gain for azimuth motor. Corrects steady-state error. Default: 0</td>
+          </tr>
+          <tr>
+            <td>D_az (Azimuth D-Gain)</td>
+            <td><span id="D_az">Loading...</span></td>
+            <td>0-1000</td>
+            <td>Derivative gain for azimuth motor. Reduces overshoot. Default: 0</td>
           </tr>
           <tr>
             <td>MIN_EL_SPEED</td>
@@ -855,20 +950,32 @@
           <tr>
             <td>MIN_AZ_TOLERANCE</td>
             <td><span id="MIN_AZ_TOLERANCE">Loading...</span>°</td>
-            <td>0.1-10.0</td>
-            <td>Initial azimuth tolerance when moving. Default: 1.5°</td>
+            <td>0.01-10.0</td>
+            <td>Initial azimuth tolerance when moving. Default: 0.01°</td>
           </tr>
           <tr>
             <td>MIN_EL_TOLERANCE</td>
             <td><span id="MIN_EL_TOLERANCE">Loading...</span>°</td>
-            <td>0.1-10.0</td>
-            <td>Initial elevation tolerance when moving. Default: 0.1°</td>
+            <td>0.01-10.0</td>
+            <td>Initial elevation tolerance when moving. Default: 0.01°</td>
           </tr>
           <tr>
-            <td>MAX_FAULT_POWER</td>
-            <td><span id="MAX_FAULT_POWER">Loading...</span>W</td>
-            <td>0-25</td>
-            <td>Max power draw before a fault is raised. Default: 10W</td>
+            <td>MAX_FAULT_POWER_AZ</td>
+            <td><span id="MAX_FAULT_POWER_AZ">Loading...</span>W</td>
+            <td>1-25</td>
+            <td>Max AZ power before fault. Default: 8W</td>
+          </tr>
+          <tr>
+            <td>MAX_FAULT_POWER_EL</td>
+            <td><span id="MAX_FAULT_POWER_EL">Loading...</span>W</td>
+            <td>1-25</td>
+            <td>Max EL power before fault. Default: 7W</td>
+          </tr>
+          <tr>
+            <td>MAX_FAULT_POWER_TOTAL</td>
+            <td><span id="MAX_FAULT_POWER_TOTAL">Loading...</span>W</td>
+            <td>1-25</td>
+            <td>Max total power (both motors). Default: 10W</td>
           </tr>
           <tr>
             <td>MIN_VOLTAGE_THRESHOLD</td>
@@ -876,14 +983,51 @@
             <td>1-20</td>
             <td>Min voltage before low voltage fault is raised. Default: 6V</td>
           </tr>
+          <tr><td colspan="4"><strong>Smooth Tracking Parameters (Kalman Filter)</strong></td></tr>
+          <tr>
+            <td>Kalman Q</td>
+            <td><span id="smKalQ">Loading...</span></td>
+            <td>0.01-100</td>
+            <td>Process noise. Higher = tracks faster-moving targets. Default: 1.0</td>
+          </tr>
+          <tr>
+            <td>Kalman R</td>
+            <td><span id="smKalR">Loading...</span></td>
+            <td>0.01-100</td>
+            <td>Measurement noise. Higher = smoother but more lag. Default: 1.0</td>
+          </tr>
+          <tr>
+            <td>MIN_SMOOTH_AZ_SPEED</td>
+            <td><span id="smMinAzSpd">Loading...</span></td>
+            <td>0-255</td>
+            <td>Min PWM for smooth AZ motor. Higher = slower. Default: 220</td>
+          </tr>
+          <tr>
+            <td>MIN_SMOOTH_EL_SPEED</td>
+            <td><span id="smMinElSpd">Loading...</span></td>
+            <td>0-255</td>
+            <td>Min PWM for smooth EL motor. Higher = slower. Default: 220</td>
+          </tr>
         </table>
 
         <form action='/setAdvancedParams' method='POST'>
           <label for='P_el'>P_el (Elevation P-Gain):</label>
-          <input type='number' id='P_el_input' name='P_el' min='-1000' max='1000' step='1'>
+          <input type='number' id='P_el_input' name='P_el' min='0' max='1000' step='1'>
+
+          <label for='I_el'>I_el (Elevation I-Gain):</label>
+          <input type='number' id='I_el_input' name='I_el' min='0' max='1000' step='0.1'>
+
+          <label for='D_el'>D_el (Elevation D-Gain):</label>
+          <input type='number' id='D_el_input' name='D_el' min='0' max='1000' step='0.1'>
 
           <label for='P_az'>P_az (Azimuth P-Gain):</label>
-          <input type='number' id='P_az_input' name='P_az' min='-1000' max='1000' step='1'>
+          <input type='number' id='P_az_input' name='P_az' min='0' max='1000' step='1'>
+
+          <label for='I_az'>I_az (Azimuth I-Gain):</label>
+          <input type='number' id='I_az_input' name='I_az' min='0' max='1000' step='0.1'>
+
+          <label for='D_az'>D_az (Azimuth D-Gain):</label>
+          <input type='number' id='D_az_input' name='D_az' min='0' max='1000' step='0.1'>
 
           <label for='MIN_EL_SPEED'>MIN_EL_SPEED:</label>
           <input type='number' id='MIN_EL_SPEED_input' name='MIN_EL_SPEED' min='0' max='255' step='1'>
@@ -892,19 +1036,48 @@
           <input type='number' id='MIN_AZ_SPEED_input' name='MIN_AZ_SPEED' min='0' max='255' step='1'>
 
           <label for='MIN_AZ_TOLERANCE'>MIN_AZ_TOLERANCE (degrees):</label>
-          <input type='number' id='MIN_AZ_TOLERANCE_input' name='MIN_AZ_TOLERANCE' min='0.1' max='10.0' step='0.1'>
+          <input type='number' id='MIN_AZ_TOLERANCE_input' name='MIN_AZ_TOLERANCE' min='0.01' max='10.0' step='0.01'>
 
           <label for='MIN_EL_TOLERANCE'>MIN_EL_TOLERANCE (degrees):</label>
-          <input type='number' id='MIN_EL_TOLERANCE_input' name='MIN_EL_TOLERANCE' min='0.1' max='10.0' step='0.1'>
+          <input type='number' id='MIN_EL_TOLERANCE_input' name='MIN_EL_TOLERANCE' min='0.01' max='10.0' step='0.01'>
 
-          <label for='MAX FAULT POWER'>MAX FAULT POWER (watts):</label>
-          <input type='number' id='MAX_FAULT_POWER_input' name='MAX_FAULT_POWER' min='0' max='25' step='1'>
+          <label for='MAX_FAULT_POWER_AZ'>MAX FAULT POWER AZ (watts):</label>
+          <input type='number' id='MAX_FAULT_POWER_AZ_input' name='MAX_FAULT_POWER_AZ' min='1' max='25' step='1'>
+
+          <label for='MAX_FAULT_POWER_EL'>MAX FAULT POWER EL (watts):</label>
+          <input type='number' id='MAX_FAULT_POWER_EL_input' name='MAX_FAULT_POWER_EL' min='1' max='25' step='1'>
+
+          <label for='MAX_FAULT_POWER_TOTAL'>MAX FAULT POWER TOTAL (watts):</label>
+          <input type='number' id='MAX_FAULT_POWER_TOTAL_input' name='MAX_FAULT_POWER_TOTAL' min='1' max='25' step='1'>
 
           <label for='MIN_VOLTAGE_THRESHOLD'>MIN VOLTAGE THRESHOLD (volts):</label>
           <input type='number' id='MIN_VOLTAGE_THRESHOLD_input' name='MIN_VOLTAGE_THRESHOLD' min='1' max='20' step='1'>
 
+          <label><strong>Smooth Tracking Parameters (Kalman Filter)</strong></label>
+
+          <label for='smKalQ'>Kalman Q (Process Noise):</label>
+          <input type='number' id='smKalQ_input' name='smKalQ' min='0.01' max='100' step='0.01'>
+
+          <label for='smKalR'>Kalman R (Measurement Noise):</label>
+          <input type='number' id='smKalR_input' name='smKalR' min='0.01' max='100' step='0.01'>
+
+          <label for='smMinAzSpd'>MIN_SMOOTH_AZ_SPEED:</label>
+          <input type='number' id='smMinAzSpd_input' name='smMinAzSpd' min='0' max='255' step='1'>
+
+          <label for='smMinElSpd'>MIN_SMOOTH_EL_SPEED:</label>
+          <input type='number' id='smMinElSpd_input' name='smMinElSpd' min='0' max='255' step='1'>
+
           <input type='submit' value='Update Advanced Parameters'>
         </form>
+
+        <label>Disable Direction Lock:</label>
+        <p>
+          <label class="switch">
+            <input type="checkbox" id="disableDirectionLockToggle" onchange="toggleDirectionLock()">
+            <span class="slider"></span>
+          </label>
+        </p>
+
       </div>
   </div>
 

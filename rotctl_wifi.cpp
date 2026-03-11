@@ -42,28 +42,49 @@ void RotctlWifi::rotctlWifiLoop(bool serialActive, bool stellariumOn) {
     // Handle rotator control for GPredict and Look4Sat direct control
     handleClientConnection();
     handleClientCommands();
-    
-    // Check for disconnected clients
+
+    // Check for disconnected clients with grace period for mesh handoff.
+    // During WiFi mesh handoff, connected() returns false momentarily.
+    // Without the grace period, we'd destroy a connection that TCP would
+    // have kept alive through retransmission.
     if (_rotator_client && !_rotator_client.connected()) {
-        disconnectClient();
+        if (_disconnectDetectedMs == 0) {
+            _disconnectDetectedMs = millis();
+            _logger.debug("Client connection lost — starting " + String(DISCONNECT_GRACE_MS / 1000) + "s grace period");
+        } else if (millis() - _disconnectDetectedMs > DISCONNECT_GRACE_MS) {
+            _logger.info("Client disconnected after grace period");
+            disconnectClient();
+            _disconnectDetectedMs = 0;
+        }
+    } else if (_disconnectDetectedMs != 0) {
+        // Connection recovered during grace period (mesh handoff survived)
+        _logger.info("Client connection recovered after " + String(millis() - _disconnectDetectedMs) + "ms");
+        _disconnectDetectedMs = 0;
     }
 }
 
 void RotctlWifi::handleClientConnection() {
-    if (!_rotator_client || !_rotator_client.connected()) {
-        _rotator_client = _rotator_server->available();
-        if (_rotator_client) {
-            _logger.info("New client connected");
-            _rotctl_client_ip = _rotator_client.remoteIP().toString();
-            _rotator_client.setTimeout(60);
-            _lastClientActivity = millis();
+    WiFiClient newClient = _rotator_server->available();
+
+    if (newClient) {
+        // A new connection is pending — accept it
+        if (_rotator_client && _rotator_client.connected()) {
+            // Replace existing client (likely stale after mesh handoff)
+            _logger.warn("New client connecting while existing client present — replacing (old: " + _rotctl_client_ip + ")");
+            _rotator_client.stop();
         }
+        _rotator_client = newClient;
+        _rotctl_client_ip = _rotator_client.remoteIP().toString();
+        _rotator_client.setTimeout(60);
+        enableTcpKeepalive();
+        _lastClientActivity = millis();
+        _logger.info("Client connected from " + _rotctl_client_ip);
     }
 }
 
 void RotctlWifi::handleClientCommands() {
     if (!_rotator_client || !_rotator_client.connected()) {
-        _rotctl_client_ip = "NO ROTCTL CONNECTION";
+        // Don't reset IP here — let the grace period logic in rotctlWifiLoop handle it
         return;
     }
     
@@ -76,7 +97,7 @@ void RotctlWifi::handleClientCommands() {
         return;
     }
     
-    _logger.info("Received message: " + request);
+    _logger.debug("Received message: " + request);
     
     // Handle different rotctl commands
     if (request.startsWith("\\P") || request.startsWith("P") || request.startsWith("\\set_pos") || request.startsWith("set_pos")) {
@@ -109,7 +130,7 @@ void RotctlWifi::handleClientCommands() {
 String RotctlWifi::readCommandFromClient() {
     String request = "";
     unsigned long startMillis = millis();
-    
+
     while (millis() - startMillis < READ_TIMEOUT) {
         while (_rotator_client.available()) {
             char c = _rotator_client.read();
@@ -117,10 +138,13 @@ String RotctlWifi::readCommandFromClient() {
                 request.trim();  // Strip \r and any whitespace
                 return request;
             }
-            request += c;
+            if (request.length() < 256) {
+                request += c;
+            }
         }
+        delay(1);  // Yield CPU to other tasks while waiting for more data
     }
-    
+
     request.trim();
     return request;
 }
@@ -200,7 +224,7 @@ void RotctlWifi::handleDumpCapsCommand() {
     resp += "Can Stop:\tY\n";
     resp += "Can Park:\tY\n";
     resp += "Can Reset:\tY\n";
-    resp += "Can Move:\tN\n";       // Change to Y if you implement M
+    resp += "Can Move:\tN\n";
     resp += "Can get Info:\tY\n";
     resp += "Can get Status:\tN\n";
     resp += "Can set Func:\tN\n";
@@ -231,8 +255,8 @@ void RotctlWifi::handlePositionCommand(const String& request) {
     _motorSensorCtrl.setSetPointAz(az);
     _motorSensorCtrl.setSetPointEl(el);
     
-    _logger.info("Parsed Azimuth: " + String(_motorSensorCtrl.getSetPointAz(), 2) +
-                 ", Elevation: " + String(_motorSensorCtrl.getSetPointEl(), 2));
+    _logger.debug("Parsed Azimuth: " + String(_motorSensorCtrl.getSetPointAz(), 2) +
+                  ", Elevation: " + String(_motorSensorCtrl.getSetPointEl(), 2));
     
     _rotator_client.print("RPRT 0\n");
 }
@@ -248,7 +272,7 @@ void RotctlWifi::handleGetPositionCommand() {
     String response = String(_motorSensorCtrl.getCorrectedAngleAz(), 2) + "\n" + 
                      String(el, 2) + "\n";
     _rotator_client.print(response);
-    _logger.info("Responded with position: " + response);
+    _logger.debug("Responded with position: " + response);
 }
 
 void RotctlWifi::handleStopCommand() {
@@ -285,15 +309,34 @@ float RotctlWifi::cleanupElevation(float el) {
     if (isnan(el)) {
         el = 0;
     }
-    
-    if (el < 0) el = 0;
+
+    float minEl = _motorSensorCtrl.isExtendedElEnabled() ? -90.0f : 0.0f;
+    if (el < minEl) el = minEl;
     if (el > 90) el = 90;
-    
+
     return el;
+}
+
+void RotctlWifi::enableTcpKeepalive() {
+    int fd = _rotator_client.fd();
+    if (fd < 0) return;
+
+    int keepAlive = 1;
+    int keepIdle = 5;       // Start probing after 5s idle
+    int keepInterval = 5;   // Probe every 5s
+    int keepCount = 3;      // Drop after 3 failed probes (~20s total)
+
+    setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepAlive, sizeof(keepAlive));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepIdle, sizeof(keepIdle));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepInterval, sizeof(keepInterval));
+    setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepCount, sizeof(keepCount));
+
+    _logger.debug("TCP keepalive enabled (idle=5s, interval=5s, count=3)");
 }
 
 void RotctlWifi::disconnectClient() {
     _rotctl_client_ip = "NO ROTCTL CONNECTION";
+    _disconnectDetectedMs = 0;
     _rotator_client.stop();
     _rotator_client = WiFiClient();
 }

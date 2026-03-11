@@ -23,6 +23,7 @@
 #include <Preferences.h>
 #include <WiFiServer.h>
 #include <WiFiClient.h>
+#include <lwip/sockets.h>
 
 #include "motor_controller.h"
 #include "logger.h"
@@ -40,6 +41,7 @@ public:
 private:
     static const unsigned long CLIENT_TIMEOUT = 10000;  // 10 seconds timeout
     static const unsigned long READ_TIMEOUT = 1000;     // 1 second read timeout
+    static const unsigned long DISCONNECT_GRACE_MS = 5000;  // 5s grace period for mesh handoff
     static const int DEFAULT_ROTCTL_PORT = 4533;
     
     void handleClientConnection();
@@ -52,6 +54,7 @@ private:
     void handleDumpStateCommand();
     void handleDumpCapsCommand();
     void disconnectClient();
+    void enableTcpKeepalive();
     String readCommandFromClient();
     float cleanupAzimuth(float az);
     float cleanupElevation(float el);
@@ -64,6 +67,7 @@ private:
     WiFiClient _rotator_client;
     String _rotctl_client_ip = "NO ROTCTL CONNECTION";
     unsigned long _lastClientActivity = 0;
+    unsigned long _disconnectDetectedMs = 0;
 };
 
 #endif
