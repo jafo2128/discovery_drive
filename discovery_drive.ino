@@ -216,7 +216,7 @@ void SafetyMonitor(void *pvParameters) {
 
 void HandleWebRequests(void *pvParameters) {
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = 100 / portTICK_PERIOD_MS;
+  const TickType_t xFrequency = 20 / portTICK_PERIOD_MS;
   for(;;) {
     webServerManager.server->handleClient();
     vTaskDelayUntil(&xLastWakeTime, xFrequency);

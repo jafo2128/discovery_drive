@@ -81,15 +81,21 @@ void WebServerManager::setupRoutes() {
 }
 
 void WebServerManager::setupStaticRoutes() {
+    // Cache static assets for 1 hour — on page refresh, the browser serves
+    // these from cache instead of hitting the ESP32, which can only handle
+    // one request per handleClient() tick.
     server->on("/styles.css", HTTP_GET, [this]() {
+        server->sendHeader("Cache-Control", "max-age=3600");
         handleStaticFile("/styles.css", "text/css");
     });
 
     server->on("/script.js", HTTP_GET, [this]() {
+        server->sendHeader("Cache-Control", "max-age=3600");
         handleStaticFile("/script.js", "application/javascript");
     });
 
     server->on("/Logo-Circle-Cream.png", HTTP_GET, [this]() {
+        server->sendHeader("Cache-Control", "max-age=86400");
         handleStaticFile("/Logo-Circle-Cream.png", "image/png");
     });
 }
@@ -106,9 +112,8 @@ void WebServerManager::setupMainPageRoutes() {
             }
         }
 
-        // Stream HTML directly from LittleFS — avoids allocating a ~40KB String
-        // which can fail on fragmented heap and truncate the page.
-        // Checkbox states are synced by JavaScript via /config and /status endpoints.
+        // Stream HTML directly from LittleFS — no ~40KB heap allocation.
+        // Checkbox states are synced by JavaScript via /config and /status.
         handleStaticFile("/index.html", "text/html");
     });
 
@@ -748,7 +753,7 @@ void WebServerManager::setupAPIRoutes() {
 
     // Real-time status endpoint - polled frequently, no NVS reads
     server->on("/status", HTTP_GET, [this]() {
-        static DynamicJsonDocument doc(6144);
+        static DynamicJsonDocument doc(8192);
         doc.clear();
 
         // Motor and control data — use native numeric types to avoid String heap allocations
@@ -873,7 +878,7 @@ void WebServerManager::setupAPIRoutes() {
 
     // Configuration endpoint - fetched once on page load and after settings changes
     server->on("/config", HTTP_GET, [this]() {
-        static DynamicJsonDocument doc(6144);
+        static DynamicJsonDocument doc(8192);
         doc.clear();
 
         // Network configuration (NVS reads)

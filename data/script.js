@@ -3,9 +3,9 @@ var logLines = [];
 var MAX_LOG_LINES = 100000;
 
 function xget(url,cb){var x=new XMLHttpRequest();x.open("GET",url,true);if(cb)x.onreadystatechange=function(){if(x.readyState==4)cb(x)};x.send()}
-function toggle(id,onUrl,offUrl){var c=document.getElementById(id).checked;xget(c?onUrl:offUrl)}
+function toggle(id,onUrl,offUrl){var e=document.getElementById(id);if(!e)return;var c=e.checked;xget(c?onUrl:offUrl)}
 function sync(id,val){var e=document.getElementById(id);if(e)e.checked=(val==="ON")}
-function s(id,v){document.getElementById(id).innerHTML=v}
+function s(id,v){var e=document.getElementById(id);if(e)e.innerHTML=v}
 function confirmPost(msg,action){if(confirm(msg)){var f=document.createElement('form');f.method='POST';f.action=action;document.body.appendChild(f);f.submit()}}
 
 // Intercept form submissions to config endpoints — submit via XHR and refresh config
