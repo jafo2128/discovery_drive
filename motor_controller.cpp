@@ -1251,7 +1251,9 @@ void MotorSensorController::angle_shortest_error_az(float target_angle, float cu
     }
 
     // Handle unwinding requirements
-    if (target_angle == 0 || ((current_angle + error) > 360 || (current_angle + error) < 0)) {
+    // Use tolerance for the zero check — Kalman prediction can wrap 0° to ~359.99°
+    bool targetNearOrigin = (target_angle < 0.5f || target_angle > 359.5f);
+    if (targetNearOrigin || ((current_angle + error) > 360 || (current_angle + error) < 0)) {
         if (needs_unwind <= -1) {
             error = (error > 180) ? error : error + 360;
         } else if (needs_unwind >= 1) {

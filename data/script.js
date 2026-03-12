@@ -224,8 +224,8 @@ setInterval(function() {
       var elevation = data.correctedAngle_el;
       var setpoint_az = data.setpoint_az;
       var setpoint_el = data.setpoint_el;
-      var kalmanAz = data.kalmanAzPos ? parseFloat(data.kalmanAzPos) : null;
-      var kalmanEl = data.kalmanElPos ? parseFloat(data.kalmanElPos) : null;
+      var kalmanAz = data.kalmanAzPos != null ? parseFloat(data.kalmanAzPos) : null;
+      var kalmanEl = data.kalmanElPos != null ? parseFloat(data.kalmanElPos) : null;
       if (data.kalmanAzVel) s("kalmanAzVel", data.kalmanAzVel + " deg/s");
       if (data.kalmanElVel) s("kalmanElVel", data.kalmanElVel + " deg/s");
 
@@ -416,8 +416,8 @@ function drawPositions(azimuth, elevation, setpoint_az, setpoint_el, kalmanAz, k
   ];
 
   // Add Kalman estimate as green marker when smooth tracking is active
-  if (kalmanAz !== null && kalmanEl !== null && kalmanAz >= 0 && kalmanEl >= 0) {
-    var kEl = kalmanEl >= 350 ? 0 : kalmanEl;
+  if (kalmanAz !== null && kalmanEl !== null && kalmanAz >= 0 && (kalmanEl >= 0 || kalmanEl >= -5)) {
+    var kEl = kalmanEl >= 350 ? 0 : Math.max(kalmanEl, 0);
     positions.push({ az: kalmanAz * toRadians + adjustedAzimuth, el: 1 - (kEl / 90), radius: 4, color: '#00cc00', fill: true });
   }
 
@@ -519,15 +519,11 @@ function updateVariable() {
 }
 
 function submitHome() {
-  var form = document.createElement('form');
-  form.method = 'POST';
-  form.action = '/submitHome';
-  document.body.appendChild(form);
-  form.submit();
+  fetch('/submitHome', { method: 'POST' });
 }
 
 function stopMotors() {
-  fetch('/stopMotors', { method: 'POST' }).then(function() { setTimeout(fetchStatus, 200); });
+  fetch('/stopMotors', { method: 'POST' });
 }
 
 function toggleHotspotMode() {
