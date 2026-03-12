@@ -778,6 +778,11 @@ void MotorSensorController::setDirectionLockEnabled(bool enabled) {
     _logger.info("Direction lock " + String(enabled ? "enabled" : "disabled"));
 }
 
+void MotorSensorController::setSafeMode(bool enabled) {
+    safeMode = enabled;
+    _logger.info("Safe mode " + String(enabled ? "ON" : "OFF"));
+}
+
 void MotorSensorController::setExtendedElEnabled(bool enabled) {
     _extendedElEnabled = enabled;
     _preferences.putBool("extendedEl", enabled);

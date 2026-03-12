@@ -29,6 +29,13 @@
           <button type="button" onclick="submitHome()">Home</button>
           <button type="button" onclick="stopMotors()" class="stop-btn">STOP</button>
         </div>
+        <div class="safe-mode-container">
+          <label class="safe-mode-label" id="safeModeLabel">SAFE MODE</label>
+          <label class="switch">
+            <input type="checkbox" id="safeModeToggle" onchange="toggleSafeMode()">
+            <span class="slider"></span>
+          </label>
+        </div>
       </form>
       <canvas id="skyplaneCanvas" width="350" height="350"></canvas>
     </div>
@@ -62,12 +69,12 @@
         <th>Value</th>
       </tr>
       <tr>
-        <td>Corrected Angle Elevation</td>
-        <td><span id="correctedAngle_el">Loading...</span></td>
-      </tr>
-      <tr>
         <td>Corrected Angle Azimuth</td>
         <td><span id="correctedAngle_az">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Corrected Angle Elevation</td>
+        <td><span id="correctedAngle_el">Loading...</span></td>
       </tr>
       <tr>
         <td>Azimuth Setpoint</td>
@@ -78,6 +85,15 @@
         <td><span id="setpoint_el">Loading...</span></td>
       </tr>
       <tr>
+        <td>Azimuth Error</td>
+        <td><span id="error_az">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Elevation Error</td>
+        <td><span id="error_el">Loading...</span></td>
+      </tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
+      <tr>
         <td>Azimuth State</td>
         <td><span id="setPointState_az">Loading...</span></td>
       </tr>
@@ -86,13 +102,47 @@
         <td><span id="setPointState_el">Loading...</span></td>
       </tr>
       <tr>
-        <td>Azimuth Error</td>
-        <td><span id="error_az">Loading...</span></td>
+        <td>AZ Motor Latched</td>
+        <td><span id="isAzMotorLatched">Loading...</span></td>
       </tr>
       <tr>
-        <td>Elevation Error</td>
-        <td><span id="error_el">Loading...</span></td>
+        <td>EL Motor Latched</td>
+        <td><span id="isElMotorLatched">Loading...</span></td>
       </tr>
+      <tr>
+        <td>AZ Motor Speed</td>
+        <td><span id="motorSpeedPctAz">Loading...</span>%</td>
+      </tr>
+      <tr>
+        <td>EL Motor Speed</td>
+        <td><span id="motorSpeedPctEl">Loading...</span>%</td>
+      </tr>
+      <tr>
+        <td>Tolerance AZ</td>
+        <td><span id="toleranceAz">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Tolerance EL</td>
+        <td><span id="toleranceEl">Loading...</span></td>
+      </tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
+      <tr>
+        <td>Direction Lock</td>
+        <td><span id="directionLockStatus">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Smooth Tracking</td>
+        <td><span id="smoothTrackingActive">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Kalman AZ Vel</td>
+        <td><span id="kalmanAzVel">-</span></td>
+      </tr>
+      <tr>
+        <td>Kalman EL Vel</td>
+        <td><span id="kalmanElVel">-</span></td>
+      </tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
       <tr>
         <td>Elevation Tare Angle</td>
         <td><span id="el_startAngle">Loading...</span></td>
@@ -101,6 +151,15 @@
         <td>Needs Unwind</td>
         <td><span id="needs_unwind">Loading...</span></td>
       </tr>
+      <tr>
+        <td>Serial Active</td>
+        <td><span id="serialActive">Loading...</span></td>
+      </tr>
+      <tr>
+        <td>Safe Mode</td>
+        <td><span id="safeModeStatus">Loading...</span></td>
+      </tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
       <tr>
         <td>Hall AZ Sensor I2C Error</td>
         <td><span id="i2cErrorFlag_az">Loading...</span></td>
@@ -121,34 +180,7 @@
         <td>Fault Tripped</td>
         <td><span id="faultTripped">Loading...</span></td>
       </tr>
-      <tr>
-        <td>AZ Motor Latched</td>
-        <td><span id="isAzMotorLatched">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>EL Motor Latched</td>
-        <td><span id="isElMotorLatched">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>AZ Motor Speed</td>
-        <td><span id="motorSpeedPctAz">Loading...</span>%</td>
-      </tr>
-      <tr>
-        <td>EL Motor Speed</td>
-        <td><span id="motorSpeedPctEl">Loading...</span>%</td>
-      </tr>
-      <tr>
-        <td>Serial Active</td>
-        <td><span id="serialActive">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>Tolerance AZ</td>
-        <td><span id="toleranceAz">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>Tolerance EL</td>
-        <td><span id="toleranceEl">Loading...</span></td>
-      </tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
       <tr>
         <td>Input Voltage (V)</td>
         <td><span id="inputVoltage">Loading...</span></td>
@@ -161,7 +193,7 @@
         <td>Rotator Power Draw (W)</td>
         <td><span id="rotatorPowerDraw">Loading...</span></td>
       </tr>
-      <tr>
+      <tr class="section-divider"><td colspan="2"></td></tr>
       <tr>
         <td>Wind Stow Active</td>
         <td><span id="windStowActive">Loading...</span></td>
@@ -178,26 +210,10 @@
         <td>Wind Tracking Status</td>
         <td><span id="windTrackingStatus">Loading...</span></td>
       </tr>
-      <tr>
-        <td>Direction Lock</td>
-        <td><span id="directionLockStatus">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>Smooth Tracking</td>
-        <td><span id="smoothTrackingActive">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>Kalman AZ Vel</td>
-        <td><span id="kalmanAzVel">-</span></td>
-      </tr>
-      <tr>
-        <td>Kalman EL Vel</td>
-        <td><span id="kalmanElVel">-</span></td>
-      </tr>
     </table>
 
     <h3>Debug Level Control</h3>
-    <p>Note that Serial Error Output must be disabled if you are using the Serial rotctl interface, or if will interfere with rotctl messages.</p>
+    <p>Note that Serial Error Output must be disabled if you are using the Serial rotctl interface, or it will interfere with rotctl messages.</p>
     <table>
       <tr>
         <th>Parameter</th>
@@ -206,35 +222,15 @@
       </tr>
       <tr>
         <td>Current Debug Level</td>
-        <td><span id="currentDebugLevel">Loading...</span></td>
+        <td><span id="currentDebugLevel" class="editable" data-type="select" data-param="debugLevel" data-endpoint="/setDebugLevel" data-options="0:0 - NONE,1:1 - ERROR,2:2 - WARN,3:3 - INFO,4:4 - DEBUG,5:5 - VERBOSE">Loading...</span></td>
         <td>1 (ERROR)</td>
       </tr>
       <tr>
         <td>Serial Output Disabled</td>
-        <td><span id="serialOutputDisabled">Loading...</span></td>
+        <td><span id="serialOutputDisabled" class="editable" data-type="toggle" data-on-label="True" data-off-label="False" data-on-url="/setSerialOutputDisabled?disabled=true" data-off-url="/setSerialOutputDisabled?disabled=false">Loading...</span></td>
         <td>False</td>
       </tr>
     </table>
-
-    <form id="debugLevelForm" onsubmit="return setDebugLevel();">
-      <label for="debugLevel">Set Debug Level:</label>
-      <select id="debugLevel" name="debugLevel" onchange="setDebugLevel()">
-        <option value="0">0 - NONE (No logging)</option>
-        <option value="1">1 - ERROR (Errors only)</option>
-        <option value="2">2 - WARN (Warnings and errors)</option>
-        <option value="3">3 - INFO (Info, warnings, errors)</option>
-        <option value="4">4 - DEBUG (Debug and above)</option>
-        <option value="5">5 - VERBOSE (All messages)</option>
-      </select>
-    </form>
-
-    <label>Disable Serial Error Output:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="disableSerialOutput" onchange="toggleSerialOutput()">
-        <span class="slider"></span>
-      </label>
-    </p>
 
     <div class="error-messages-section">
       <h3>System Messages</h3>
@@ -248,6 +244,7 @@
 
   <div class="section-box">
     <h2>Web Connection Setup</h2>
+    <p>Click a value to edit. Changing these will restart the device.</p>
     <table>
       <tr>
         <th>Parameter</th>
@@ -255,85 +252,54 @@
         <th>Default</th>
       </tr>
       <tr>
-        <td>Current Hostname</td>
-        <td><span id="hostname">Loading...</span></td>
+        <td>Hostname</td>
+        <td><span id="hostname" class="editable" data-param="hostname" data-endpoint="/setHostname" data-confirm="Changing the hostname will restart the device. Continue?">Loading...</span></td>
         <td>discoverydrive</td>
       </tr>
       <tr>
-        <td>Current HTTP Port</td>
-        <td><span id="http_port">Loading...</span></td>
+        <td>HTTP Port</td>
+        <td><span id="http_port" class="editable" data-param="http_port" data-endpoint="/setPorts" data-input-type="int" data-min="1" data-max="65535" data-confirm="Changing the port will restart the device. Continue?">Loading...</span></td>
         <td>80</td>
       </tr>
       <tr>
-        <td>Current Rotctl Port</td>
-        <td><span id="rotctl_port">Loading...</span></td>
+        <td>Rotctl Port</td>
+        <td><span id="rotctl_port" class="editable" data-param="rotctl_port" data-endpoint="/setPorts" data-input-type="int" data-min="1" data-max="65535" data-confirm="Changing the port will restart the device. Continue?">Loading...</span></td>
         <td>4533</td>
       </tr>
     </table>
-    <form action='/setHostname' method='POST'>
-      <label for='hostname'>New Hostname:</label>
-      <input type='text' id='hostnameInput' name='hostname' maxlength="32">
-      <input type='submit' value='Submit'>
-    </form>
-    <form action='/setPorts' method='POST'>
-      <label for='http_port'>New HTTP Port:</label>
-      <input type='number' id='http_port' name='http_port' min="1" max="65535">
-      <label for='rotctl_port'>New Rotctl Port:</label>
-      <input type='number' id='rotctl_port' name='rotctl_port' min="1" max="65535">
-      <input type='submit' value='Submit'>
-    </form>
   </div>
 
   <div class="section-box">
     <h2>WiFi Setup</h2>
-    <table>
-      <tr>
-        <th>Parameter</th>
-        <th>Value</th>
-      </tr>
-      <tr>
-        <td>Current WiFi SSID</td>
-        <td><span id="wifissid">Loading...</span></td>
-      </tr>
-    </table>
-
     <form action='/setWiFi' method='POST'>
-      <label for='ssid'>SSID:</label>
-      <input type='text' id='ssid' name='ssid'>
-
-      <label for='password'>Password:</label>
-      <input type='text' id='password' name='password'>
-
-      <label for='hotspot'>Activate Hotspot Mode:</label>
-
-      <p>
-        <label class="switch">
-          <input type="checkbox" id="hotspot" name="hotspot" onchange="toggleHotspotMode()">
-          <span class="slider"></span>
-        </label>
-      </p>
-
-      <input type='submit' value='Submit'>
+      <table>
+        <tr>
+          <th>Parameter</th>
+          <th>Value</th>
+        </tr>
+        <tr>
+          <td>Current SSID</td>
+          <td><span id="wifissid">Loading...</span></td>
+        </tr>
+        <tr>
+          <td>New SSID</td>
+          <td><input type='text' id='ssid' name='ssid' class='table-input' placeholder='Enter SSID'></td>
+        </tr>
+        <tr>
+          <td>New Password</td>
+          <td><input type='password' id='password' name='password' class='table-input' placeholder='Enter password'></td>
+        </tr>
+        <tr>
+          <td>Hotspot Mode</td>
+          <td><select id="hotspotSelect" class="table-input" onchange="toggleHotspotMode()"><option value="off">OFF</option><option value="on">ON</option></select><input type="hidden" id="hotspotHidden" name="" value=""></td>
+        </tr>
+      </table>
+      <input type='submit' value='Set WiFi'>
     </form>
   </div>
 
   <div class="section-box">
     <h2>WiFi Status</h2>
-    <label>Signal Strength: </label>
-    <div id='signalBars'>
-      <div class='signal'>
-        <div id='bar1' class='bar bar1'></div>
-      </div>
-      <div class='signal'>
-        <div id='bar2' class='bar bar2'></div>
-      </div>
-      <div class='signal'>
-        <div id='bar3' class='bar bar3'></div>
-      </div>
-      <div class='signal'>
-        <div id='bar4' class='bar bar4'></div>
-      </div>
-    </div>
     <table>
       <tr>
         <th>Parameter</th>
@@ -341,7 +307,7 @@
       </tr>
       <tr>
         <td>Rotator IP Address</td>
-        <td><span id="ip_addr">Loading...</span></td>
+        <td><span id="ip_addr">Loading...</span> <span class="copy-icon" onclick="copyToClipboard('ip_addr', this)" title="Copy to clipboard">&#x1F4CB;</span></td>
       </tr>
       <tr>
         <td>Rotctl Client IP</td>
@@ -349,7 +315,7 @@
       </tr>
       <tr>
         <td>WiFi RSSI</td>
-        <td><span id="rssi">Loading...</span></td>
+        <td><span id="rssi">Loading...</span> <span id="signalBars" style="display:inline-flex;align-items:flex-end;vertical-align:baseline;margin-left:6px"><span class="signal"><span id="bar1" class="bar bar1"></span></span><span class="signal"><span id="bar2" class="bar bar2"></span></span><span class="signal"><span id="bar3" class="bar bar3"></span></span><span class="signal"><span id="bar4" class="bar bar4"></span></span></span></td>
       </tr>
       <tr>
         <td>WiFi BSSID (Mac Address)</td>
@@ -364,8 +330,8 @@
 
   <div class="section-box">
     <h2>Calibration</h2>
-    <p>WARNING: Turning calibration ON has the potentional to permanently break your rotator (especially elevation)! </p>
-    <p>WARNING: Only activate calibration if you know what you are doing! </p>
+    <p>WARNING: Turning calibration ON has the potential to permanently break your rotator (especially elevation)!</p>
+    <p>WARNING: Only activate calibration if you know what you are doing!</p>
 
     <table>
       <tr>
@@ -374,20 +340,12 @@
       </tr>
       <tr>
         <td>Cal Mode</td>
-        <td><span id="calMode">Loading...</span></td>
+        <td><span id="calMode" class="editable" data-type="toggle" data-on-url="/calon" data-off-url="/caloff">Loading...</span></td>
       </tr>
     </table>
 
-    <label>Activate Calibration Mode:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="toggleCal" onchange="toggleCal()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
+    <div id="calMoveSection" style="display:none">
     <h3>Manual Motor Movement</h3>
-    <p><strong>Warning:</strong> Only use these controls when calibration mode is active!</p>
 
     <label>AZ Move: </label>
     <p>
@@ -411,9 +369,10 @@
     <p>
       <button onclick="calEl()">Tare Elevation</button>
     </p>
+    </div>
 
     <h3>Angle Offsets</h3>
-    <p>Use these offsets to correct for systematic angle errors. Positive values increase the reported angle.</p>
+    <p>Use these offsets to correct for systematic angle errors. Click a value to edit it.</p>
 
     <table>
       <tr>
@@ -422,30 +381,18 @@
       </tr>
       <tr>
         <td>Azimuth Angle Offset</td>
-        <td><span id="azOffset">Loading...</span>°</td>
+        <td><span id="azOffset" class="editable" data-param="azOffset" data-endpoint="/setAngleOffsets" data-input-type="number" data-min="-180" data-max="180">Loading...</span>°</td>
       </tr>
       <tr>
         <td>Elevation Angle Offset</td>
-        <td><span id="elOffset">Loading...</span>°</td>
+        <td><span id="elOffset" class="editable" data-param="elOffset" data-endpoint="/setAngleOffsets" data-input-type="number" data-min="-5" data-max="5">Loading...</span>°</td>
       </tr>
     </table>
-
-    <form action='/setAngleOffsets' method='POST'>
-      <label for='azOffset'>Azimuth Offset (±180°):</label>
-      <input type='number' id='azOffsetInput' name='azOffset' min='-180' max='180' step='0.001' placeholder='0.000'>
-
-      <label for='elOffset'>Elevation Offset (±5°):</label>
-      <input type='number' id='elOffsetInput' name='elOffset' min='-5' max='5' step='0.001' placeholder='0.000'>
-
-      <input type='submit' value='Set Angle Offsets'>
-    </form>
   </div>
 
   <div class="section-box">
     <h2>Motor and Movement Settings</h2>
-    <p>If you have heavy power budget limitations, you can limit the max speed. Note that this naturally limits the max torque. Max speed restrictions only apply when both motors are moving.</p>
-    <p>Dual Motor Max Speed: The maximum speed the motors should run at when both motors are used at the same time </p>
-    <p>Single Motor Max Speed: The maximum speed the motors should run at when used in single motor mode, or when in dual motor mode, but one motor is not running</p>
+    <p>Click any speed value to edit it directly. Max speed restrictions only apply when both motors are moving.</p>
     <table>
       <tr>
         <th>Parameter</th>
@@ -454,72 +401,36 @@
       </tr>
       <tr>
         <td>Max Dual Motor Azimuth Speed</td>
-        <td><span id="maxDualMotorAzSpeed">Loading...</span>%</td>
+        <td><span id="maxDualMotorAzSpeed" class="editable" data-param="maxDualMotorAzSpeed" data-endpoint="/setDualMotorMaxSpeed" data-input-type="int" data-min="0" data-max="100">Loading...</span>%</td>
         <td>100%</td>
       </tr>
       <tr>
         <td>Max Dual Motor Elevation Speed</td>
-        <td><span id="maxDualMotorElSpeed">Loading...</span>%</td>
+        <td><span id="maxDualMotorElSpeed" class="editable" data-param="maxDualMotorElSpeed" data-endpoint="/setDualMotorMaxSpeed" data-input-type="int" data-min="0" data-max="100">Loading...</span>%</td>
         <td>100%</td>
       </tr>
       <tr>
         <td>Max Single Motor Azimuth Speed</td>
-        <td><span id="maxSingleMotorAzSpeed">Loading...</span>%</td>
+        <td><span id="maxSingleMotorAzSpeed" class="editable" data-param="maxSingleMotorAzSpeed" data-endpoint="/setSingleMotorMaxSpeed" data-input-type="int" data-min="0" data-max="100">Loading...</span>%</td>
         <td>100%</td>
       </tr>
       <tr>
         <td>Max Single Motor Elevation Speed</td>
-        <td><span id="maxSingleMotorElSpeed">Loading...</span>%</td>
+        <td><span id="maxSingleMotorElSpeed" class="editable" data-param="maxSingleMotorElSpeed" data-endpoint="/setSingleMotorMaxSpeed" data-input-type="int" data-min="0" data-max="100">Loading...</span>%</td>
         <td>100%</td>
       </tr>
       <tr>
         <td>Single Motor Mode</td>
-        <td><span id="singleMotorModeText">Loading...</span></td>
+        <td><span id="singleMotorModeText" class="editable" data-type="toggle" data-on-url="/setSingleMotorModeOn" data-off-url="/setSingleMotorModeOff">Loading...</span></td>
+        <td>OFF</td>
+      </tr>
+      <tr>
+        <td>Negative Elevation (-90 to 90)</td>
+        <td><span id="extendedElEnabled" class="editable" data-type="toggle" data-on-url="/extendedElOn" data-off-url="/extendedElOff">Loading...</span></td>
         <td>OFF</td>
       </tr>
     </table>
-
-    <form action='/setDualMotorMaxSpeed' method='POST'>
-      <label for='maxDualMotorAzSpeed'>Max Dual Motor Azimuth Speed:</label>
-      <input type='number' id='maxDualMotorAzSpeed' name='maxDualMotorAzSpeed' min='0' max='100'>
-      <label for='maxDualMotorElSpeed'>Max Dual Motor Elevation Speed:</label>
-      <input type='number' id='maxDualMotorElSpeed' name='maxDualMotorElSpeed' min='0' max='100'>
-      <input type='submit' value='Submit'>
-    </form>
-
-    <form action='/setSingleMotorMaxSpeed' method='POST'>
-      <label for='maxSingleMotorAzSpeed'>Max Single Motor Azimuth Speed:</label>
-      <input type='number' id='maxSingleMotorAzSpeed' name='maxSingleMotorAzSpeed' min='0' max='100'>
-      <label for='maxSingleMotorElSpeed'>Max Single Motor Elevation Speed:</label>
-      <input type='number' id='maxSingleMotorElSpeed' name='maxSingleMotorElSpeed' min='0' max='100'>
-      <input type='submit' value='Submit'>
-    </form>
-
-    <label>Single Motor Mode:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="singleMotorMode" onchange="setSingleMotorMode()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
-    <label>Enable Negative Elevation (-90 to 90):</label>
-    <p><strong>WARNING:</strong> Setting a negative elevation could jam your rotator if a dish or other large antenna is attached. Make sure that your attached antenna or device will not impact the rotator body during negative elevation.</p>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="extendedElToggle" onchange="toggleExtendedEl()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
-    <label>Auto-Home (return to home when idle):</label>
-    <p>Automatically returns the dish to its home position after no setpoints have been received for the configured timeout. If wind-based home is enabled, it will home to the wind-safe position instead of (0, 0).</p>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="autoHomeToggle" onchange="toggleAutoHome()">
-        <span class="slider"></span>
-      </label>
-    </p>
+    <p><strong>WARNING:</strong> Negative elevation could jam your rotator if a dish or large antenna is attached.</p>
 
     <table>
       <tr>
@@ -529,30 +440,16 @@
       </tr>
       <tr>
         <td>Auto-Home</td>
-        <td><span id="autoHomeEnabled">Loading...</span></td>
+        <td><span id="autoHomeEnabled" class="editable" data-type="toggle" data-on-url="/autoHomeOn" data-off-url="/autoHomeOff">Loading...</span></td>
         <td>OFF</td>
       </tr>
       <tr>
         <td>Auto-Home Timeout</td>
-        <td><span id="autoHomeMins">Loading...</span> minutes</td>
+        <td><span id="autoHomeMins" class="editable" data-param="autoHomeMins" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="1" data-max="60">Loading...</span> minutes</td>
         <td>3 minutes</td>
       </tr>
     </table>
-
-    <form action='/setAdvancedParams' method='POST'>
-      <label for='autoHomeMins'>Auto-Home Timeout (minutes, 1-60):</label>
-      <input type='number' id='autoHomeMins_input' name='autoHomeMins' min='1' max='60' step='1' placeholder='3'>
-      <input type='submit' value='Set Auto-Home Timeout'>
-    </form>
-
-    <label>Smooth Tracking (Kalman filter):</label>
-    <p><strong>NOTE:</strong> Smooth tracking uses a Kalman filter to interpolate setpoints between updates, reducing jerky movement. Reduces output torque (MIN_SMOOTH speeds) — only usable for low-torque situations (e.g. cameras). During wind stow, full torque is automatically restored.</p>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="smoothTrackingToggle" onchange="toggleSmoothTracking()">
-        <span class="slider"></span>
-      </label>
-    </p>
+    <p>Auto-Home returns the dish to its home position after no setpoints for the configured timeout.</p>
 
     <table>
       <tr>
@@ -562,11 +459,11 @@
       </tr>
       <tr>
         <td>Smooth Tracking</td>
-        <td><span id="smoothTrackingEnabled">Loading...</span></td>
+        <td><span id="smoothTrackingEnabled" class="editable" data-type="toggle" data-on-url="/smoothTrackingOn" data-off-url="/smoothTrackingOff">Loading...</span></td>
         <td>OFF</td>
       </tr>
     </table>
-
+    <p>Smooth tracking uses a Kalman filter to interpolate setpoints. Reduces output torque &mdash; only for low-torque situations (e.g. cameras).</p>
   </div>
 
   <div class="section-box">
@@ -580,18 +477,18 @@
         <th>Default</th>
       </tr>
       <tr>
-        <td>Stellarium Polling On</td>
-        <td><span id="stellariumPollingOn">Loading...</span></td>
+        <td>Stellarium Polling</td>
+        <td><span id="stellariumPollingOn" class="editable" data-type="toggle" data-on-url="/stellariumOn" data-off-url="/stellariumOff">Loading...</span></td>
         <td>OFF</td>
       </tr>
       <tr>
         <td>Stellarium Server IP</td>
-        <td><span id="stellariumServerIPText">Loading...</span></td>
+        <td><span id="stellariumServerIPText" class="editable" data-param="stellariumServerIP" data-endpoint="/setStellarium">Loading...</span></td>
         <td>-</td>
       </tr>
       <tr>
         <td>Stellarium Server Port</td>
-        <td><span id="stellariumServerPortText">Loading...</span></td>
+        <td><span id="stellariumServerPortText" class="editable" data-param="stellariumServerPort" data-endpoint="/setStellarium" data-input-type="int" data-min="1" data-max="65535">Loading...</span></td>
         <td>8090</td>
       </tr>
       <tr>
@@ -600,22 +497,6 @@
         <td>Disconnected</td>
       </tr>
     </table>
-
-    <label>Stellarium Polling:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="stellariumOn" onchange="stellariumOn()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
-    <form action='/setStellarium' method='POST'>
-      <label for='stellariumServerIP'>Stellarium Server IP:</label>
-      <input type='text' id='stellariumServerIP' name='stellariumServerIP'>
-      <label for='stellariumServerPort'>Stellarium Server Port:</label>
-      <input type='number' id='stellariumServerPort' name='stellariumServerPort'>
-      <input type='submit' value='Submit'>
-    </form>
   </div>
 
   <div class="section-box">
@@ -624,6 +505,7 @@
     <p><strong>Powered by WeatherAPI.com</strong> - Requires a free API key from <a href="https://www.weatherapi.com/" target="_blank">weatherapi.com</a></p>
 
     <h3>Wind Safety Configuration</h3>
+    <p>Click threshold values to edit them directly.</p>
     <table>
       <tr>
         <th>Parameter</th>
@@ -632,22 +514,22 @@
       </tr>
       <tr>
         <td>Emergency Wind Stow</td>
-        <td><span id="windSafetyEnabled">Loading...</span></td>
+        <td><span id="windSafetyEnabled" class="editable" data-type="toggle" data-on-url="/windSafetyOn" data-off-url="/windSafetyOff">Loading...</span></td>
         <td>Automatically stow dish when wind conditions are unsafe</td>
       </tr>
       <tr>
         <td>Wind-Based Home Position</td>
-        <td><span id="windBasedHomeEnabled">Loading...</span></td>
+        <td><span id="windBasedHomeEnabled" class="editable" data-type="toggle" data-on-url="/windBasedHomeOn" data-off-url="/windBasedHomeOff">Loading...</span></td>
         <td>Set HOME position based on current wind direction</td>
       </tr>
       <tr>
         <td>Wind Speed Threshold</td>
-        <td><span id="windSpeedThreshold">Loading...</span> km/h</td>
+        <td><span id="windSpeedThreshold" class="editable" data-param="windSpeedThreshold" data-endpoint="/setWindThresholds" data-input-type="number" data-min="10" data-max="200">Loading...</span> km/h</td>
         <td>Max sustained wind speed before emergency stow</td>
       </tr>
       <tr>
         <td>Wind Gust Threshold</td>
-        <td><span id="windGustThreshold">Loading...</span> km/h</td>
+        <td><span id="windGustThreshold" class="editable" data-param="windGustThreshold" data-endpoint="/setWindThresholds" data-input-type="number" data-min="10" data-max="200">Loading...</span> km/h</td>
         <td>Max wind gust before emergency stow</td>
       </tr>
       <tr>
@@ -662,36 +544,10 @@
       </tr>
     </table>
 
-    <label>Enable Emergency Wind Stow:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="windSafetyToggle" onchange="toggleWindSafety()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
-    <label>Enable Wind-Based Home Position:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="windBasedHomeToggle" onchange="toggleWindBasedHome()">
-        <span class="slider"></span>
-      </label>
-    </p>
-
-    <form action='/setWindThresholds' method='POST'>
-      <label for='windSpeedThreshold'>Wind Speed Threshold (km/h):</label>
-      <input type='number' id='windSpeedThresholdInput' name='windSpeedThreshold' min='10' max='200' step='1' placeholder='50'>
-
-      <label for='windGustThreshold'>Wind Gust Threshold (km/h):</label>
-      <input type='number' id='windGustThresholdInput' name='windGustThreshold' min='10' max='200' step='1' placeholder='60'>
-
-      <input type='submit' value='Set Wind Thresholds'>
-    </form>
-
     <div id="windStowAlert" class="alert-box">
       <span id="windStowMessage"></span>
     </div>
-
+    <br>
     <table>
       <tr>
         <th>Parameter</th>
@@ -700,7 +556,7 @@
       </tr>
       <tr>
         <td>Weather Polling</td>
-        <td><span id="weatherEnabled">Loading...</span></td>
+        <td><span id="weatherEnabled" class="editable" data-type="toggle" data-on-url="/weatherOn" data-off-url="/weatherOff">Loading...</span></td>
         <td>ON</td>
       </tr>
       <tr>
@@ -715,12 +571,12 @@
       </tr>
       <tr>
         <td>Latitude</td>
-        <td><span id="weatherLatitude">Loading...</span></td>
+        <td><span id="weatherLatitude" class="editable" data-param="latitude" data-endpoint="/setWeatherLocation" data-input-type="number" data-min="-90" data-max="90" data-pair="weatherLongitude:longitude">Loading...</span></td>
         <td>Not Set</td>
       </tr>
       <tr>
         <td>Longitude</td>
-        <td><span id="weatherLongitude">Loading...</span></td>
+        <td><span id="weatherLongitude" class="editable" data-param="longitude" data-endpoint="/setWeatherLocation" data-input-type="number" data-min="-180" data-max="180" data-pair="weatherLatitude:latitude">Loading...</span></td>
         <td>Not Set</td>
       </tr>
       <tr>
@@ -742,26 +598,6 @@
       <input type='text' id='weatherApiKey' name='weatherApiKey' placeholder='Enter your API key from weatherapi.com' maxlength='64'>
       <input type='submit' value='Set API Key'>
     </form>
-
-    <form action='/setWeatherLocation' method='POST'>
-      <label for='latitude'>Latitude (decimal degrees):</label>
-      <input type='number' id='latitude' name='latitude' step='0.000001' min='-90' max='90' placeholder='e.g. 40.7128'>
-
-      <label for='longitude'>Longitude (decimal degrees):</label>
-      <input type='number' id='longitude' name='longitude' step='0.000001' min='-180' max='180' placeholder='e.g. -74.0060'>
-
-      <input type='submit' value='Set Location'>
-    </form>
-
-    <button type="button" onclick="getMyLocation()">Use My Location</button>
-
-    <label>Enable Weather Polling:</label>
-    <p>
-      <label class="switch">
-        <input type="checkbox" id="weatherPolling" onchange="toggleWeatherPolling()">
-        <span class="slider"></span>
-      </label>
-    </p>
 
     <button type="button" onclick="forceWeatherUpdate()">Force Update</button>
 
@@ -835,30 +671,32 @@
 
   <div class="section-box">
     <h2>ESP32 Control Panel & Security</h2>
-    <p>Set Optional Login Username and Password to Blank to Disable </p>
-    <p>Warning! Remember your username and password! The only way to reset the password is by using command "RESET_WEB_PW" on the serial interface. </p>
-
-    <table>
-      <tr>
-        <th>Parameter</th>
-        <th>Value</th>
-      </tr>
-      <tr>
-        <td>Password Active</td>
-        <td><span id="passwordStatus">Loading...</span></td>
-      </tr>
-      <tr>
-        <td>Current Username</td>
-        <td><span id="loginUser">Loading...</span></td>
-      </tr>
-    </table>
+    <p>Set username and password to blank to disable login. The only way to reset a forgotten password is via serial command "RESET_WEB_PW".</p>
 
     <form action='/setPassword' method='POST'>
-      <label for='loginUser'>Username:</label>
-      <input type='text' id='loginUser' name='loginUser'>
-      <label for='loginPassword'>Password:</label>
-      <input type='text' id='loginPassword' name='loginPassword'>
-      <input type='submit' value='Submit'>
+      <table>
+        <tr>
+          <th>Parameter</th>
+          <th>Value</th>
+        </tr>
+        <tr>
+          <td>Password Active</td>
+          <td><span id="passwordStatus">Loading...</span></td>
+        </tr>
+        <tr>
+          <td>Current Username</td>
+          <td><span id="loginUserDisplay">Loading...</span></td>
+        </tr>
+        <tr>
+          <td>New Username</td>
+          <td><input type='text' id='loginUser' name='loginUser' class='table-input' placeholder='Enter username'></td>
+        </tr>
+        <tr>
+          <td>New Password</td>
+          <td><input type='password' id='loginPassword' name='loginPassword' class='table-input' placeholder='Enter password'></td>
+        </tr>
+      </table>
+      <input type='submit' value='Set Credentials'>
     </form>
 
     <button type="button" onclick="confirmRestartESP32()" class="danger-btn">Restart ESP32</button>
@@ -882,6 +720,7 @@
   <div class="section-box">
       <h2>Advanced Motor Parameters</h2>
       <p><strong>WARNING:</strong> Only modify these parameters if you understand their impact on motor control behavior.</p>
+      <p>Click any value to edit it directly.</p>
 
       <label>Show Advanced Parameters:</label>
       <p>
@@ -899,184 +738,127 @@
             <th>Range</th>
             <th>Description</th>
           </tr>
+          <tr><td colspan="4" class="table-group-header">PID Control &mdash; Elevation</td></tr>
           <tr>
-            <td>P_el (Elevation P-Gain)</td>
-            <td><span id="P_el">Loading...</span></td>
+            <td>P_el (P-Gain)</td>
+            <td><span id="P_el" class="editable" data-param="P_el" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="1000">Loading...</span></td>
             <td>0-1000</td>
-            <td>Proportional gain for elevation motor control. Default: 100</td>
+            <td>Proportional gain. Default: 100</td>
           </tr>
           <tr>
-            <td>I_el (Elevation I-Gain)</td>
-            <td><span id="I_el">Loading...</span></td>
+            <td>I_el (I-Gain)</td>
+            <td><span id="I_el" class="editable" data-param="I_el" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0" data-max="1000">Loading...</span></td>
             <td>0-1000</td>
-            <td>Integral gain for elevation motor. Corrects steady-state error. Default: 0</td>
+            <td>Integral gain. Default: 0</td>
           </tr>
           <tr>
-            <td>D_el (Elevation D-Gain)</td>
-            <td><span id="D_el">Loading...</span></td>
+            <td>D_el (D-Gain)</td>
+            <td><span id="D_el" class="editable" data-param="D_el" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0" data-max="1000">Loading...</span></td>
             <td>0-1000</td>
-            <td>Derivative gain for elevation motor. Reduces overshoot. Default: 0</td>
+            <td>Derivative gain. Default: 0</td>
+          </tr>
+          <tr><td colspan="4" class="table-group-header">PID Control &mdash; Azimuth</td></tr>
+          <tr>
+            <td>P_az (P-Gain)</td>
+            <td><span id="P_az" class="editable" data-param="P_az" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="1000">Loading...</span></td>
+            <td>0-1000</td>
+            <td>Proportional gain. Default: 50</td>
           </tr>
           <tr>
-            <td>P_az (Azimuth P-Gain)</td>
-            <td><span id="P_az">Loading...</span></td>
+            <td>I_az (I-Gain)</td>
+            <td><span id="I_az" class="editable" data-param="I_az" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0" data-max="1000">Loading...</span></td>
             <td>0-1000</td>
-            <td>Proportional gain for azimuth motor control. Default: 5</td>
+            <td>Integral gain. Default: 2</td>
           </tr>
           <tr>
-            <td>I_az (Azimuth I-Gain)</td>
-            <td><span id="I_az">Loading...</span></td>
+            <td>D_az (D-Gain)</td>
+            <td><span id="D_az" class="editable" data-param="D_az" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0" data-max="1000">Loading...</span></td>
             <td>0-1000</td>
-            <td>Integral gain for azimuth motor. Corrects steady-state error. Default: 0</td>
+            <td>Derivative gain. Default: 35</td>
           </tr>
-          <tr>
-            <td>D_az (Azimuth D-Gain)</td>
-            <td><span id="D_az">Loading...</span></td>
-            <td>0-1000</td>
-            <td>Derivative gain for azimuth motor. Reduces overshoot. Default: 0</td>
-          </tr>
+          <tr><td colspan="4" class="table-group-header">Motor Speeds & Tolerances</td></tr>
           <tr>
             <td>MIN_EL_SPEED</td>
-            <td><span id="MIN_EL_SPEED">Loading...</span></td>
+            <td><span id="MIN_EL_SPEED" class="editable" data-param="MIN_EL_SPEED" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="255">Loading...</span></td>
             <td>0-255</td>
-            <td>Minimum PWM speed for elevation motor. Lower is faster. Default: 50</td>
+            <td>Min PWM for elevation motor. Lower = faster. Default: 50</td>
           </tr>
           <tr>
             <td>MIN_AZ_SPEED</td>
-            <td><span id="MIN_AZ_SPEED">Loading...</span></td>
+            <td><span id="MIN_AZ_SPEED" class="editable" data-param="MIN_AZ_SPEED" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="255">Loading...</span></td>
             <td>0-255</td>
-            <td>Minimum PWM speed for azimuth motor. Lower is faster. Default: 100</td>
+            <td>Min PWM for azimuth motor. Lower = faster. Default: 100</td>
           </tr>
           <tr>
             <td>MIN_AZ_TOLERANCE</td>
-            <td><span id="MIN_AZ_TOLERANCE">Loading...</span>°</td>
+            <td><span id="MIN_AZ_TOLERANCE" class="editable" data-param="MIN_AZ_TOLERANCE" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0.01" data-max="10">Loading...</span>°</td>
             <td>0.01-10.0</td>
-            <td>Initial azimuth tolerance when moving. Default: 0.1°</td>
+            <td>Initial azimuth tolerance. Default: 0.1°</td>
           </tr>
           <tr>
             <td>MIN_EL_TOLERANCE</td>
-            <td><span id="MIN_EL_TOLERANCE">Loading...</span>°</td>
+            <td><span id="MIN_EL_TOLERANCE" class="editable" data-param="MIN_EL_TOLERANCE" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0.01" data-max="10">Loading...</span>°</td>
             <td>0.01-10.0</td>
-            <td>Initial elevation tolerance when moving. Default: 0.1°</td>
+            <td>Initial elevation tolerance. Default: 0.1°</td>
           </tr>
+          <tr><td colspan="4" class="table-group-header">Safety Thresholds</td></tr>
           <tr>
             <td>MAX_FAULT_POWER_AZ</td>
-            <td><span id="MAX_FAULT_POWER_AZ">Loading...</span>W</td>
+            <td><span id="MAX_FAULT_POWER_AZ" class="editable" data-param="MAX_FAULT_POWER_AZ" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="1" data-max="25">Loading...</span>W</td>
             <td>1-25</td>
             <td>Max AZ power before fault. Default: 8W</td>
           </tr>
           <tr>
             <td>MAX_FAULT_POWER_EL</td>
-            <td><span id="MAX_FAULT_POWER_EL">Loading...</span>W</td>
+            <td><span id="MAX_FAULT_POWER_EL" class="editable" data-param="MAX_FAULT_POWER_EL" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="1" data-max="25">Loading...</span>W</td>
             <td>1-25</td>
             <td>Max EL power before fault. Default: 7W</td>
           </tr>
           <tr>
             <td>MAX_FAULT_POWER_TOTAL</td>
-            <td><span id="MAX_FAULT_POWER_TOTAL">Loading...</span>W</td>
+            <td><span id="MAX_FAULT_POWER_TOTAL" class="editable" data-param="MAX_FAULT_POWER_TOTAL" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="1" data-max="25">Loading...</span>W</td>
             <td>1-25</td>
             <td>Max total power (both motors). Default: 10W</td>
           </tr>
           <tr>
             <td>MIN_VOLTAGE_THRESHOLD</td>
-            <td><span id="MIN_VOLTAGE_THRESHOLD">Loading...</span>V</td>
+            <td><span id="MIN_VOLTAGE_THRESHOLD" class="editable" data-param="MIN_VOLTAGE_THRESHOLD" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="1" data-max="20">Loading...</span>V</td>
             <td>1-20</td>
-            <td>Min voltage before low voltage fault is raised. Default: 6V</td>
+            <td>Min voltage before fault. Default: 6V</td>
           </tr>
-          <tr><td colspan="4"><strong>Smooth Tracking Parameters (Kalman Filter)</strong></td></tr>
+          <tr><td colspan="4" class="table-group-header">Smooth Tracking (Kalman Filter)</td></tr>
           <tr>
             <td>Kalman Q</td>
-            <td><span id="smKalQ">Loading...</span></td>
+            <td><span id="smKalQ" class="editable" data-param="smKalQ" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0.01" data-max="100">Loading...</span></td>
             <td>0.01-100</td>
-            <td>Process noise. Higher = tracks faster-moving targets. Default: 1.0</td>
+            <td>Process noise. Higher = faster tracking. Default: 1.0</td>
           </tr>
           <tr>
             <td>Kalman R</td>
-            <td><span id="smKalR">Loading...</span></td>
+            <td><span id="smKalR" class="editable" data-param="smKalR" data-endpoint="/setAdvancedParams" data-input-type="number" data-min="0.01" data-max="100">Loading...</span></td>
             <td>0.01-100</td>
-            <td>Measurement noise. Higher = smoother but more lag. Default: 1.0</td>
+            <td>Measurement noise. Higher = smoother. Default: 1.0</td>
           </tr>
           <tr>
             <td>MIN_SMOOTH_AZ_SPEED</td>
-            <td><span id="smMinAzSpd">Loading...</span></td>
+            <td><span id="smMinAzSpd" class="editable" data-param="smMinAzSpd" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="255">Loading...</span></td>
             <td>0-255</td>
-            <td>Min PWM for smooth AZ motor. Higher = slower. Default: 220</td>
+            <td>Min PWM for smooth AZ. Higher = slower. Default: 220</td>
           </tr>
           <tr>
             <td>MIN_SMOOTH_EL_SPEED</td>
-            <td><span id="smMinElSpd">Loading...</span></td>
+            <td><span id="smMinElSpd" class="editable" data-param="smMinElSpd" data-endpoint="/setAdvancedParams" data-input-type="int" data-min="0" data-max="255">Loading...</span></td>
             <td>0-255</td>
-            <td>Min PWM for smooth EL motor. Higher = slower. Default: 220</td>
+            <td>Min PWM for smooth EL. Higher = slower. Default: 220</td>
+          </tr>
+          <tr><td colspan="4" class="table-group-header">Other</td></tr>
+          <tr>
+            <td>Direction Lock</td>
+            <td><span id="directionLockSetting" class="editable" data-type="toggle" data-on-url="/directionLockOn" data-off-url="/directionLockOff">Loading...</span></td>
+            <td>-</td>
+            <td>Lock motor direction during tracking. Default: ON</td>
           </tr>
         </table>
-
-        <form action='/setAdvancedParams' method='POST'>
-          <label for='P_el'>P_el (Elevation P-Gain):</label>
-          <input type='number' id='P_el_input' name='P_el' min='0' max='1000' step='1'>
-
-          <label for='I_el'>I_el (Elevation I-Gain):</label>
-          <input type='number' id='I_el_input' name='I_el' min='0' max='1000' step='0.1'>
-
-          <label for='D_el'>D_el (Elevation D-Gain):</label>
-          <input type='number' id='D_el_input' name='D_el' min='0' max='1000' step='0.1'>
-
-          <label for='P_az'>P_az (Azimuth P-Gain):</label>
-          <input type='number' id='P_az_input' name='P_az' min='0' max='1000' step='1'>
-
-          <label for='I_az'>I_az (Azimuth I-Gain):</label>
-          <input type='number' id='I_az_input' name='I_az' min='0' max='1000' step='0.1'>
-
-          <label for='D_az'>D_az (Azimuth D-Gain):</label>
-          <input type='number' id='D_az_input' name='D_az' min='0' max='1000' step='0.1'>
-
-          <label for='MIN_EL_SPEED'>MIN_EL_SPEED:</label>
-          <input type='number' id='MIN_EL_SPEED_input' name='MIN_EL_SPEED' min='0' max='255' step='1'>
-
-          <label for='MIN_AZ_SPEED'>MIN_AZ_SPEED:</label>
-          <input type='number' id='MIN_AZ_SPEED_input' name='MIN_AZ_SPEED' min='0' max='255' step='1'>
-
-          <label for='MIN_AZ_TOLERANCE'>MIN_AZ_TOLERANCE (degrees):</label>
-          <input type='number' id='MIN_AZ_TOLERANCE_input' name='MIN_AZ_TOLERANCE' min='0.01' max='10.0' step='0.01'>
-
-          <label for='MIN_EL_TOLERANCE'>MIN_EL_TOLERANCE (degrees):</label>
-          <input type='number' id='MIN_EL_TOLERANCE_input' name='MIN_EL_TOLERANCE' min='0.01' max='10.0' step='0.01'>
-
-          <label for='MAX_FAULT_POWER_AZ'>MAX FAULT POWER AZ (watts):</label>
-          <input type='number' id='MAX_FAULT_POWER_AZ_input' name='MAX_FAULT_POWER_AZ' min='1' max='25' step='1'>
-
-          <label for='MAX_FAULT_POWER_EL'>MAX FAULT POWER EL (watts):</label>
-          <input type='number' id='MAX_FAULT_POWER_EL_input' name='MAX_FAULT_POWER_EL' min='1' max='25' step='1'>
-
-          <label for='MAX_FAULT_POWER_TOTAL'>MAX FAULT POWER TOTAL (watts):</label>
-          <input type='number' id='MAX_FAULT_POWER_TOTAL_input' name='MAX_FAULT_POWER_TOTAL' min='1' max='25' step='1'>
-
-          <label for='MIN_VOLTAGE_THRESHOLD'>MIN VOLTAGE THRESHOLD (volts):</label>
-          <input type='number' id='MIN_VOLTAGE_THRESHOLD_input' name='MIN_VOLTAGE_THRESHOLD' min='1' max='20' step='1'>
-
-          <label><strong>Smooth Tracking Parameters (Kalman Filter)</strong></label>
-
-          <label for='smKalQ'>Kalman Q (Process Noise):</label>
-          <input type='number' id='smKalQ_input' name='smKalQ' min='0.01' max='100' step='0.01'>
-
-          <label for='smKalR'>Kalman R (Measurement Noise):</label>
-          <input type='number' id='smKalR_input' name='smKalR' min='0.01' max='100' step='0.01'>
-
-          <label for='smMinAzSpd'>MIN_SMOOTH_AZ_SPEED:</label>
-          <input type='number' id='smMinAzSpd_input' name='smMinAzSpd' min='0' max='255' step='1'>
-
-          <label for='smMinElSpd'>MIN_SMOOTH_EL_SPEED:</label>
-          <input type='number' id='smMinElSpd_input' name='smMinElSpd' min='0' max='255' step='1'>
-
-          <input type='submit' value='Update Advanced Parameters'>
-        </form>
-
-        <label>Disable Direction Lock:</label>
-        <p>
-          <label class="switch">
-            <input type="checkbox" id="disableDirectionLockToggle" onchange="toggleDirectionLock()">
-            <span class="slider"></span>
-          </label>
-        </p>
 
       </div>
   </div>

@@ -120,77 +120,117 @@ bool SerialManager::processPositionQueries() {
 
 bool SerialManager::processPositionCommands() {
     if ((_inputString.startsWith("AZ") && _inputString.length() > 2) || (_inputString.startsWith("EL") && _inputString.length() > 2)) {
-        parseAndSetPosition();
         updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
+        parseAndSetPosition();
         return true;
     }
-    
+
     if (_inputString.startsWith("HOME")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _motorSensorCtrl.setSetPointAz(0);
         _motorSensorCtrl.setSetPointEl(0);
-        updateSerialActivity();
         return true;
     }
-    
+
     return false;
 }
 
 bool SerialManager::processSetPositionCommands() {
     if (_inputString.startsWith("SA SE")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _motorSensorCtrl.setSetPointAz(_motorSensorCtrl.getCorrectedAngleAz());
         _motorSensorCtrl.setSetPointEl(_motorSensorCtrl.getCorrectedAngleEl());
-        updateSerialActivity();
         return true;
     }
-    
+
     if (_inputString.startsWith("SA")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _motorSensorCtrl.setSetPointAz(_motorSensorCtrl.getCorrectedAngleAz());
-        updateSerialActivity();
         return true;
     }
-    
+
     if (_inputString.startsWith("SE")) {
-        _motorSensorCtrl.setSetPointEl(_motorSensorCtrl.getCorrectedAngleEl());
         updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
+        _motorSensorCtrl.setSetPointEl(_motorSensorCtrl.getCorrectedAngleEl());
         return true;
     }
-    
+
     return false;
 }
 
 bool SerialManager::processCalibrationCommands() {
     if (_inputString.startsWith("MV_EL")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _motorSensorCtrl.calMoveMotor(_inputString.substring(5), "EL");
-        updateSerialActivity();
         return true;
     }
-    
+
     if (_inputString.startsWith("MV_AZ")) {
-        _motorSensorCtrl.calMoveMotor(_inputString.substring(5), "AZ");
         updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
+        _motorSensorCtrl.calMoveMotor(_inputString.substring(5), "AZ");
         return true;
     }
-    
+
     if (_inputString.startsWith("CAL_ON")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _logger.info("CAL MODE ON");
         _motorSensorCtrl.calMode = true;
-        updateSerialActivity();
         return true;
     }
-    
+
     if (_inputString.startsWith("CAL_OFF")) {
+        updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
         _logger.info("CAL MODE OFF");
         _motorSensorCtrl.calMode = false;
-        updateSerialActivity();
         return true;
     }
-    
+
     if (_inputString.startsWith("CAL_EL")) {
-        _motorSensorCtrl.calibrate_elevation();
         updateSerialActivity();
+        if (_motorSensorCtrl.isSafeMode()) {
+            Serial.println("SAFE MODE - command blocked");
+            return true;
+        }
+        _motorSensorCtrl.calibrate_elevation();
         return true;
     }
-    
+
     return false;
 }
 

@@ -328,6 +328,15 @@ void WebServerManager::setupMotorControlRoutes() {
         server->send(200, "text/plain", "Smooth tracking OFF");
     });
 
+    server->on("/safeModeOn", HTTP_GET, [this]() {
+        msc.setSafeMode(true);
+        server->send(200, "text/plain", "Safe mode ON");
+    });
+    server->on("/safeModeOff", HTTP_GET, [this]() {
+        msc.setSafeMode(false);
+        server->send(200, "text/plain", "Safe mode OFF");
+    });
+
 }
 
 void WebServerManager::setupConfigurationRoutes() {
@@ -861,6 +870,7 @@ void WebServerManager::setupAPIRoutes() {
         doc["windTrackingActive"] = msc.isWindTrackingActive() ? "YES" : "NO";
         doc["windTrackingStatus"] = msc.getWindTrackingStatus();
         doc["emergencyStowActive"] = windSafetyData.emergencyStowActive ? "YES" : "NO";
+        doc["safeMode"] = msc.isSafeMode() ? "ON" : "OFF";
         doc["smoothTrackingActive"] = msc.isSmoothTrackingEnabled() ? "ON" : "OFF";
         if (msc.isSmoothTrackingEnabled()) {
             doc["kalmanAzPos"] = r2(msc.getKalmanAzPos());

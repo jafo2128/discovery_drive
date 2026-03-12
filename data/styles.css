@@ -105,6 +105,12 @@ button:hover, input[type="submit"]:hover {
   background-color: #45a049;
 }
 
+button:active, input[type="submit"]:active {
+  transform: scale(0.93);
+  filter: brightness(0.85);
+  transition: transform 0.05s, filter 0.05s;
+}
+
 .stop-btn {
   background-color: #d32f2f;
 }
@@ -112,6 +118,23 @@ button:hover, input[type="submit"]:hover {
 .stop-btn:hover {
   background-color: #b71c1c;
 }
+
+/* Safe mode toggle */
+.safe-mode-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.safe-mode-label {
+  font-size: 1.1em;
+  font-weight: bold;
+  color: #757575;
+  margin-bottom: 0;
+}
+
 
 /* Center buttons and switches in a flexbox */
 .button-container, .switch-container {
@@ -194,8 +217,8 @@ canvas {
 /* Signal bars */
 .signal {
   display: inline-block;
-  width: 10px;
-  height: 50px;
+  width: 6px;
+  height: 18px;
   position: relative;
   margin-right: 2px;
 }
@@ -433,8 +456,83 @@ th {
 .hidden{display:none}
 .error-text{color:red}
 .alert-box{color:red;font-weight:bold;margin:10px 0;display:none}
+.copy-icon{cursor:pointer;font-size:0.9em;opacity:0.6;transition:opacity 0.15s,transform 0.15s}
+.copy-icon:hover{opacity:1}
+.copy-icon:active{transform:scale(0.85)}
+.copy-flash{opacity:1 !important}
 .danger-btn{background-color:#dc3545}
 .danger-btn:hover{background-color:#c82333}
+
+/* Zebra stripe tables */
+table tr:nth-child(even):not(.section-divider) {
+  background-color: #f9f9f9;
+}
+
+/* Section divider rows in tables */
+tr.section-divider td {
+  border: none;
+  padding: 2px;
+  background-color: transparent;
+}
+
+/* Table group header rows */
+.table-group-header {
+  background-color: #e8f0fe !important;
+  font-weight: bold;
+  color: #0056b3;
+  padding: 6px 8px !important;
+  font-size: 0.9em;
+  text-align: center !important;
+}
+
+/* Inline editable values */
+.editable {
+  cursor: pointer;
+  border-bottom: 1px dashed #aaa;
+  padding: 1px 4px;
+  border-radius: 2px;
+  transition: background-color 0.15s;
+}
+
+.editable:hover {
+  background-color: #e8f4fd;
+}
+
+.editable::after {
+  content: ' \270E';
+  font-size: 0.8em;
+  color: #bbb;
+}
+
+.editable:hover::after {
+  color: #666;
+}
+
+/* Inline edit input */
+.inline-edit {
+  width: 80px !important;
+  padding: 3px 5px !important;
+  margin: 0 !important;
+  border: 2px solid #0056b3 !important;
+  border-radius: 3px !important;
+  font-size: inherit !important;
+  font-family: inherit !important;
+  box-sizing: border-box !important;
+  outline: none;
+  background-color: #fffde7;
+}
+
+/* Inputs inside tables */
+.table-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.95em;
+  font-family: inherit;
+  box-sizing: border-box;
+  margin: 0;
+}
 
 /* Mobile responsiveness */
 @media only screen and (max-width: 1200px) {

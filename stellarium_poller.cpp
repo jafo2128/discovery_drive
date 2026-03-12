@@ -59,9 +59,10 @@ void StellariumPoller::runStellariumLoop(bool serialActive, String rotctl_client
 
 bool StellariumPoller::shouldPollStellarium(bool serialActive, String rotctl_client_ip) {
     // Only poll if Stellarium is enabled and no other connections are active
-    return (getStellariumOn() && 
-            !serialActive && 
-            rotctl_client_ip == "NO ROTCTL CONNECTION");
+    return (getStellariumOn() &&
+            !serialActive &&
+            rotctl_client_ip == "NO ROTCTL CONNECTION" &&
+            !_motorSensorCtrl.isSafeMode());
 }
 
 bool StellariumPoller::pollStellariumData() {

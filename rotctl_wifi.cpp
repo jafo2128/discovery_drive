@@ -101,18 +101,38 @@ void RotctlWifi::handleClientCommands() {
     
     // Handle different rotctl commands
     if (request.startsWith("\\P") || request.startsWith("P") || request.startsWith("\\set_pos") || request.startsWith("set_pos")) {
-        handlePositionCommand(request);
+        if (_motorSensorCtrl.isSafeMode()) {
+            _logger.info("SAFE MODE - position command blocked (rotctl WiFi)");
+            _rotator_client.print("RPRT -1\n");
+        } else {
+            handlePositionCommand(request);
+        }
     } else if (request == "p" || request == "\\get_pos") {
         handleGetPositionCommand();
     } else if (request == "S" || request == "\\stop") {
-        handleStopCommand();
-        _rotator_client.print("RPRT 0\n");
+        if (_motorSensorCtrl.isSafeMode()) {
+            _logger.info("SAFE MODE - stop command blocked (rotctl WiFi)");
+            _rotator_client.print("RPRT -1\n");
+        } else {
+            handleStopCommand();
+            _rotator_client.print("RPRT 0\n");
+        }
     } else if (request.startsWith("R") || request.startsWith("\\reset")) {
-        handleResetCommand();
-        _rotator_client.print("RPRT 0\n");
+        if (_motorSensorCtrl.isSafeMode()) {
+            _logger.info("SAFE MODE - reset command blocked (rotctl WiFi)");
+            _rotator_client.print("RPRT -1\n");
+        } else {
+            handleResetCommand();
+            _rotator_client.print("RPRT 0\n");
+        }
     } else if (request == "K" || request == "\\park") {
-        handleParkCommand();
-        _rotator_client.print("RPRT 0\n");
+        if (_motorSensorCtrl.isSafeMode()) {
+            _logger.info("SAFE MODE - park command blocked (rotctl WiFi)");
+            _rotator_client.print("RPRT -1\n");
+        } else {
+            handleParkCommand();
+            _rotator_client.print("RPRT 0\n");
+        }
     } else if (request == "_" || request == "\\get_info") {
         _rotator_client.print("Discovery Drive V1.0\n");
     } else if (request == "?" || request == "dump_state" || request == "\\dump_state") {

@@ -3,15 +3,12 @@ var logLines = [];
 var MAX_LOG_LINES = 100000;
 
 function xget(url,cb){var x=new XMLHttpRequest();x.open("GET",url,true);if(cb)x.onreadystatechange=function(){if(x.readyState==4)cb(x)};x.send()}
-function toggle(id,onUrl,offUrl){var e=document.getElementById(id);if(!e)return;var c=e.checked;xget(c?onUrl:offUrl)}
-function sync(id,val){var e=document.getElementById(id);if(e)e.checked=(val==="ON")}
-function s(id,v){var e=document.getElementById(id);if(e)e.innerHTML=v}
+// s() — set innerHTML, but skip if an inline edit is active in the element
+function s(id,v){var e=document.getElementById(id);if(e && !e.querySelector('input,select'))e.innerHTML=v}
 function confirmPost(msg,action){if(confirm(msg)){var f=document.createElement('form');f.method='POST';f.action=action;document.body.appendChild(f);f.submit()}}
 
 // Intercept form submissions to config endpoints — submit via XHR and refresh config
-var configEndpoints = ['/setAdvancedParams', '/setStellarium', '/setWindThresholds',
-  '/setWeatherLocation', '/setWeatherApiKey', '/setAngleOffsets',
-  '/setDualMotorMaxSpeed', '/setSingleMotorMaxSpeed', '/setPassword'];
+var configEndpoints = ['/setWeatherApiKey', '/setPassword'];
 document.addEventListener('submit', function(e) {
   var form = e.target;
   var action = form.getAttribute('action') || '';
@@ -56,7 +53,7 @@ function fetchConfig() {
     s("rotctl_port",data.rotctl_port);
     s("hostname",data.hostname);
     s("wifissid",data.wifissid);
-    s("loginUser",data.loginUser);
+    s("loginUserDisplay",data.loginUser || "Not Set");
     s("passwordStatus",data.passwordStatus);
     s("maxDualMotorAzSpeed",data.maxDualMotorAzSpeed);
     s("maxDualMotorElSpeed",data.maxDualMotorElSpeed);
@@ -99,13 +96,6 @@ function fetchConfig() {
     s("smKalR",data.smKalR);
     s("smMinAzSpd",data.smMinAzSpd);
     s("smMinElSpd",data.smMinElSpd);
-
-    sync("weatherPolling",data.weatherEnabled);
-    sync("windSafetyToggle",data.windSafetyEnabled);
-    sync("windBasedHomeToggle",data.windBasedHomeEnabled);
-    sync("autoHomeToggle",data.autoHomeEnabled);
-    sync("smoothTrackingToggle",data.smoothTrackingEnabled);
-    sync("stellariumOn",data.stellariumPollingOn);
   });
 }
 fetchConfig();
@@ -139,8 +129,8 @@ setInterval(function() {
       s("el_startAngle",data.el_startAngle);
       s("needs_unwind",data.needs_unwind);
       s("calMode",data.calMode);
-      sync("toggleCal",data.calMode);
-      sync("singleMotorMode",data.singleMotorModeText);
+      var calSec = document.getElementById("calMoveSection");
+      if (calSec) calSec.style.display = (data.calMode === "ON") ? "block" : "none";
       s("i2cErrorFlag_az",data.i2cErrorFlag_az);
       s("i2cErrorFlag_el",data.i2cErrorFlag_el);
       s("badAngleFlag",data.badAngleFlag);
@@ -173,11 +163,16 @@ setInterval(function() {
       s("stowDirection",data.stowDirection);
 
       s("directionLockStatus",data.directionLockEnabled);
+      s("directionLockSetting",data.directionLockEnabled);
       s("smoothTrackingActive",data.smoothTrackingActive);
-      var dlToggle=document.getElementById("disableDirectionLockToggle");
-      if(dlToggle)dlToggle.checked=(data.directionLockEnabled==="OFF");
 
-      sync("extendedElToggle",data.extendedElEnabled);
+      s("safeModeStatus",data.safeMode);
+      var safeCb = document.getElementById('safeModeToggle');
+      if (safeCb) safeCb.checked = (data.safeMode === "ON");
+      var safeLbl = document.getElementById('safeModeLabel');
+      if (safeLbl) safeLbl.textContent = (data.safeMode === "ON") ? "SAFE MODE ON" : "SAFE MODE";
+
+      s("extendedElEnabled",data.extendedElEnabled);
       var elSetpointLabel = document.getElementById("elSetpointLabel");
       if (elSetpointLabel) {
         elSetpointLabel.innerHTML = (data.extendedElEnabled === "ON") ? "Set Elevation (-90 - 90):" : "Set Elevation (0 - 90):";
@@ -186,7 +181,7 @@ setInterval(function() {
       var windStowAlert = document.getElementById("windStowAlert");
       var windStowMessage = document.getElementById("windStowMessage");
       if (data.emergencyStowActive === "YES") {
-        windStowMessage.innerHTML = "⚠️ EMERGENCY WIND STOW ACTIVE: " + data.windStowReason;
+        windStowMessage.innerHTML = "EMERGENCY WIND STOW ACTIVE: " + data.windStowReason;
         windStowAlert.style.display = "block";
       } else {
         windStowAlert.style.display = "none";
@@ -206,19 +201,9 @@ setInterval(function() {
 
       updateLogDisplay();
 
-      if (document.getElementById("currentDebugLevel")) {
-        s("currentDebugLevel",data.currentDebugLevel);
-        updateDebugLevelDropdown(data.currentDebugLevel);
-      }
+      updateDebugLevelDisplay(data.currentDebugLevel);
 
-      if (document.getElementById("serialOutputDisabled")) {
-        s("serialOutputDisabled",data.serialOutputDisabled ? "True" : "False");
-      }
-
-      var disableSerialOutputCheckbox = document.getElementById("disableSerialOutput");
-      if (disableSerialOutputCheckbox) {
-        disableSerialOutputCheckbox.checked = data.serialOutputDisabled;
-      }
+      s("serialOutputDisabled",data.serialOutputDisabled ? "True" : "False");
 
       var azimuth = data.correctedAngle_az;
       var elevation = data.correctedAngle_el;
@@ -282,14 +267,6 @@ setInterval(function() {
   xhr.send();
 }, 250);
 
-function toggleWindSafety(){toggle("windSafetyToggle","/windSafetyOn","/windSafetyOff");setTimeout(fetchConfig,500)}
-function toggleWindBasedHome(){toggle("windBasedHomeToggle","/windBasedHomeOn","/windBasedHomeOff");setTimeout(fetchConfig,500)}
-function toggleDirectionLock(){var c=document.getElementById("disableDirectionLockToggle").checked;xget(c?"/directionLockOff":"/directionLockOn")}
-function toggleExtendedEl(){toggle("extendedElToggle","/extendedElOn","/extendedElOff")}
-function toggleAutoHome(){toggle("autoHomeToggle","/autoHomeOn","/autoHomeOff");setTimeout(fetchConfig,500)}
-function toggleSmoothTracking(){toggle("smoothTrackingToggle","/smoothTrackingOn","/smoothTrackingOff");setTimeout(fetchConfig,500)}
-function toggleWeatherPolling(){toggle("weatherPolling","/weatherOn","/weatherOff");setTimeout(fetchConfig,500)}
-
 function nudgeSetpoint(axis, delta) {
   var currentSpan = document.getElementById("setpoint_" + axis);
   var current = parseFloat(currentSpan.innerHTML);
@@ -299,8 +276,8 @@ function nudgeSetpoint(axis, delta) {
   if (axis === "az") {
     newValue = ((newValue % 360) + 360) % 360;
   } else {
-    var extendedEl = document.getElementById("extendedElToggle");
-    var minEl = (extendedEl && extendedEl.checked) ? -90 : 0;
+    var extendedEl = document.getElementById("extendedElEnabled");
+    var minEl = (extendedEl && extendedEl.textContent.trim() === "ON") ? -90 : 0;
     if (newValue < minEl) newValue = minEl;
     if (newValue > 90) newValue = 90;
   }
@@ -344,21 +321,12 @@ function clearErrorMessages() {
   updateLogDisplay();
 }
 
-function updateDebugLevelDropdown(currentLevel) {
-  var dropdown = document.getElementById("debugLevel");
-  if (dropdown) {
-    dropdown.value = currentLevel;
-    var levelNames = ["NONE", "ERROR", "WARN", "INFO", "DEBUG", "VERBOSE"];
-    var currentLevelDisplay = document.getElementById("currentDebugLevel");
-    if (currentLevelDisplay && currentLevel >= 0 && currentLevel <= 5) {
-      currentLevelDisplay.innerHTML = currentLevel + " (" + levelNames[currentLevel] + ")";
-    }
+function updateDebugLevelDisplay(currentLevel) {
+  var levelNames = ["NONE", "ERROR", "WARN", "INFO", "DEBUG", "VERBOSE"];
+  var el = document.getElementById("currentDebugLevel");
+  if (el && !el.querySelector('input,select') && currentLevel >= 0 && currentLevel <= 5) {
+    el.innerHTML = currentLevel + " (" + levelNames[currentLevel] + ")";
   }
-}
-
-function toggleSerialOutput() {
-  var switchState = document.getElementById("disableSerialOutput").checked;
-  xget("/setSerialOutputDisabled?disabled=" + switchState);
 }
 
 var canvas = document.getElementById("skyplaneCanvas");
@@ -484,10 +452,6 @@ function calEl(){xget("/calEl")}
 function moveEl(v){xget("/moveEl?value="+v)}
 function moveAz(v){xget("/moveAz?value="+v)}
 
-function toggleCal(){toggle("toggleCal","/calon","/caloff")}
-function setSingleMotorMode(){toggle("singleMotorMode","/setSingleMotorModeOn","/setSingleMotorModeOff")}
-function stellariumOn(){toggle("stellariumOn","/stellariumOn","/stellariumOff");setTimeout(fetchConfig,500)}
-
 function updateVariable() {
   var azValue = parseFloat(document.getElementById("new_setpoint_az").value);
   var elValue = parseFloat(document.getElementById("new_setpoint_el").value);
@@ -502,8 +466,8 @@ function updateVariable() {
     errorMessageAz.textContent = "";
   }
 
-  var extendedEl = document.getElementById("extendedElToggle");
-  var minEl = (extendedEl && extendedEl.checked) ? -90 : 0;
+  var extendedEl = document.getElementById("extendedElEnabled");
+  var minEl = (extendedEl && extendedEl.textContent.trim() === "ON") ? -90 : 0;
   if (isNaN(elValue) || elValue < minEl || elValue > 90) {
     errorMessageEl.textContent = "Please enter a valid Elevation between " + minEl + " and 90.";
     valid = false;
@@ -518,6 +482,26 @@ function updateVariable() {
   return true;
 }
 
+function copyToClipboard(id, el) {
+  var text = document.getElementById(id).textContent.trim();
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text);
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  if (el) {
+    var orig = el.textContent;
+    el.textContent = '\u2705';
+    el.classList.add('copy-flash');
+    setTimeout(function() { el.textContent = orig; el.classList.remove('copy-flash'); }, 800);
+  }
+}
+
 function submitHome() {
   fetch('/submitHome', { method: 'POST' });
 }
@@ -526,19 +510,32 @@ function stopMotors() {
   fetch('/stopMotors', { method: 'POST' });
 }
 
+function toggleSafeMode() {
+  var cb = document.getElementById('safeModeToggle');
+  xget(cb.checked ? '/safeModeOn' : '/safeModeOff');
+}
+
+
 function toggleHotspotMode() {
-  var hotspotCheckbox = document.getElementById("hotspot");
+  var hotspotSelect = document.getElementById("hotspotSelect");
+  var hotspotHidden = document.getElementById("hotspotHidden");
   var ssidField = document.getElementById("ssid");
   var passwordField = document.getElementById("password");
 
-  if (hotspotCheckbox.checked) {
+  if (hotspotSelect.value === "on") {
+    hotspotHidden.name = "hotspot";
+    hotspotHidden.value = "on";
     ssidField.value = "discoverydish_HOTSPOT";
     passwordField.value = "discoverydish";
+    passwordField.type = "text";
     ssidField.disabled = true;
     passwordField.disabled = true;
   } else {
+    hotspotHidden.name = "";
+    hotspotHidden.value = "";
     ssidField.value = "";
     passwordField.value = "";
+    passwordField.type = "password";
     ssidField.disabled = false;
     passwordField.disabled = false;
   }
@@ -547,15 +544,6 @@ function toggleHotspotMode() {
 function confirmRestartESP32(){confirmPost("Are you sure you want to restart the ESP32?\n\nThis will temporarily disconnect the web interface and interrupt any ongoing operations.","/restart")}
 function confirmResetNeedsUnwind(){confirmPost("Are you sure you want to reset Needs Unwind flag?\n\nThis could cause the rotator to over rotate and tangle cables.","/resetNeedsUnwind")}
 function confirmResetEEPROM(){confirmPost("WARNING: Are you sure you want to reset the EEPROM?\n\nThis will erase all saved settings and return the device to factory defaults. This action cannot be undone.","/resetEEPROM")}
-
-function setDebugLevel() {
-  var debugLevel = document.getElementById("debugLevel").value;
-  var xhr = new XMLHttpRequest();
-  xhr.open("POST", "/setDebugLevel", true);
-  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
-  xhr.send("debugLevel=" + debugLevel);
-  return false;
-}
 
 function toggleAdvancedParams() {
   var checkbox = document.getElementById("showAdvanced");
@@ -582,34 +570,6 @@ function forceWeatherUpdate() {
   });
 }
 
-function getMyLocation() {
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      function(position) {
-        var lat = position.coords.latitude;
-        var lon = position.coords.longitude;
-        document.getElementById('latitude').value = lat.toFixed(6);
-        document.getElementById('longitude').value = lon.toFixed(6);
-        alert("Location detected: " + lat.toFixed(6) + ", " + lon.toFixed(6) +
-              "\nClick 'Set Location' to save these coordinates.");
-      },
-      function(error) {
-        var errorMsg = "";
-        switch(error.code) {
-          case error.PERMISSION_DENIED: errorMsg = "Location access denied by user."; break;
-          case error.POSITION_UNAVAILABLE: errorMsg = "Location information is unavailable."; break;
-          case error.TIMEOUT: errorMsg = "Location request timed out."; break;
-          default: errorMsg = "An unknown error occurred."; break;
-        }
-        alert("Error getting location: " + errorMsg);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
-    );
-  } else {
-    alert("Geolocation is not supported by this browser.");
-  }
-}
-
 function formatWeatherTime(timeStr) {
   if (!timeStr || timeStr === "N/A" || timeStr === "") return "N/A";
   try {
@@ -629,6 +589,215 @@ function formatWindDirection(degrees) {
   var directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
                    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   var index = Math.round(dir / 22.5) % 16;
-  return dir.toFixed(0) + "° (" + directions[index] + ")";
+  return dir.toFixed(0) + "\u00B0 (" + directions[index] + ")";
 }
 
+// Inline editing for table values — click any .editable span to edit
+document.addEventListener('click', function(e) {
+  var span = e.target.closest('.editable');
+  if (!span || span.querySelector('input') || span.querySelector('select')) return;
+
+  var currentValue = span.textContent.trim();
+  if (currentValue === 'Loading...') return;
+
+  var type = span.getAttribute('data-type');
+  var committed = false;
+
+  if (type === 'toggle') {
+    // ON/OFF (or custom label) dropdown via GET URLs
+    var onLabel = span.getAttribute('data-on-label') || 'ON';
+    var offLabel = span.getAttribute('data-off-label') || 'OFF';
+
+    var sel = document.createElement('select');
+    sel.className = 'inline-edit';
+    [onLabel, offLabel].forEach(function(label) {
+      var opt = document.createElement('option');
+      opt.value = label;
+      opt.textContent = label;
+      if (label === currentValue) opt.selected = true;
+      sel.appendChild(opt);
+    });
+
+    span.textContent = '';
+    span.appendChild(sel);
+    sel.focus();
+
+    function commitToggle() {
+      if (committed) return;
+      committed = true;
+      var newValue = sel.value;
+      span.textContent = newValue;
+      if (newValue === currentValue) return;
+      var url = (newValue === onLabel) ?
+        span.getAttribute('data-on-url') : span.getAttribute('data-off-url');
+      xget(url, function() { setTimeout(fetchConfig, 500); });
+    }
+
+    sel.addEventListener('change', commitToggle);
+    sel.addEventListener('blur', function() {
+      if (!committed) { committed = true; span.textContent = currentValue; }
+    });
+
+  } else if (type === 'select') {
+    // Custom dropdown with POST endpoint
+    var optionsStr = span.getAttribute('data-options') || '';
+    var options = optionsStr.split(',').map(function(o) {
+      var idx = o.indexOf(':');
+      if (idx === -1) return { value: o, label: o };
+      return { value: o.substring(0, idx), label: o.substring(idx + 1) };
+    });
+
+    var sel = document.createElement('select');
+    sel.className = 'inline-edit';
+    options.forEach(function(opt) {
+      var el = document.createElement('option');
+      el.value = opt.value;
+      el.textContent = opt.label;
+      // Match current text by checking if it starts with the value
+      if (currentValue.indexOf(opt.value) === 0) el.selected = true;
+      sel.appendChild(el);
+    });
+
+    span.textContent = '';
+    span.appendChild(sel);
+    sel.focus();
+
+    function commitSelect() {
+      if (committed) return;
+      committed = true;
+      var selectedValue = sel.value;
+      var selectedLabel = sel.options[sel.selectedIndex].textContent;
+      span.textContent = selectedLabel;
+
+      // Check if value actually changed
+      var changed = true;
+      for (var i = 0; i < options.length; i++) {
+        if (currentValue.indexOf(options[i].value) === 0 && options[i].value === selectedValue) {
+          changed = false; break;
+        }
+      }
+      if (!changed) return;
+
+      var param = span.getAttribute('data-param');
+      var endpoint = span.getAttribute('data-endpoint');
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', endpoint, true);
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState == 4) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            fetchConfig();
+          } else {
+            span.textContent = currentValue;
+            alert('Error: ' + (xhr.responseText || 'Failed to update'));
+          }
+        }
+      };
+      xhr.send(encodeURIComponent(param) + '=' + encodeURIComponent(selectedValue));
+    }
+
+    sel.addEventListener('change', commitSelect);
+    sel.addEventListener('blur', function() {
+      if (!committed) { committed = true; span.textContent = currentValue; }
+    });
+
+  } else {
+    // Default: text input for param/endpoint based editing
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = currentValue;
+    input.className = 'inline-edit';
+    input.setAttribute('data-original', currentValue);
+
+    span.textContent = '';
+    span.appendChild(input);
+    input.focus();
+    input.select();
+
+    function commitText() {
+      if (committed) return;
+      committed = true;
+
+      var newValue = input.value.trim();
+      var original = input.getAttribute('data-original');
+
+      if (newValue === '' || newValue === original) {
+        span.textContent = original;
+        return;
+      }
+
+      var inputType = span.getAttribute('data-input-type');
+      var dataMin = span.getAttribute('data-min');
+      var dataMax = span.getAttribute('data-max');
+      if (inputType === 'int') {
+        if (!/^-?\d+$/.test(newValue)) { alert('Must be a whole number'); span.textContent = original; return; }
+        var num = parseInt(newValue, 10);
+        if (dataMin !== null && num < parseInt(dataMin, 10)) { alert('Value must be at least ' + dataMin); span.textContent = original; return; }
+        if (dataMax !== null && num > parseInt(dataMax, 10)) { alert('Value must be at most ' + dataMax); span.textContent = original; return; }
+      } else if (inputType === 'number') {
+        var num = parseFloat(newValue);
+        if (isNaN(num)) { alert('Must be a valid number'); span.textContent = original; return; }
+        if (dataMin !== null && num < parseFloat(dataMin)) { alert('Value must be at least ' + dataMin); span.textContent = original; return; }
+        if (dataMax !== null && num > parseFloat(dataMax)) { alert('Value must be at most ' + dataMax); span.textContent = original; return; }
+      } else if (dataMin !== null || dataMax !== null) {
+        var num = parseFloat(newValue);
+        if (isNaN(num)) { alert('Must be a valid number'); span.textContent = original; return; }
+        if (dataMin !== null && num < parseFloat(dataMin)) { alert('Value must be at least ' + dataMin); span.textContent = original; return; }
+        if (dataMax !== null && num > parseFloat(dataMax)) { alert('Value must be at most ' + dataMax); span.textContent = original; return; }
+      }
+
+      var param = span.getAttribute('data-param');
+      var endpoint = span.getAttribute('data-endpoint');
+      var confirmMsg = span.getAttribute('data-confirm');
+
+      if (confirmMsg && !confirm(confirmMsg)) {
+        span.textContent = original;
+        return;
+      }
+
+      span.textContent = newValue;
+
+      var body = encodeURIComponent(param) + '=' + encodeURIComponent(newValue);
+
+      // If this field has a paired field, include its current value too
+      var pairAttr = span.getAttribute('data-pair');
+      if (pairAttr) {
+        var parts = pairAttr.split(':');
+        var pairEl = document.getElementById(parts[0]);
+        if (pairEl) body += '&' + encodeURIComponent(parts[1]) + '=' + encodeURIComponent(pairEl.textContent.trim());
+      }
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', endpoint, true);
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState == 4) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            if (confirmMsg) {
+              alert('Device is restarting. Please wait and reload the page.');
+            } else {
+              fetchConfig();
+            }
+          } else {
+            span.textContent = original;
+            alert('Error: ' + (xhr.responseText || 'Failed to update'));
+          }
+        }
+      };
+      xhr.send(body);
+    }
+
+    input.addEventListener('blur', commitText);
+    input.addEventListener('keydown', function(ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        input.blur();
+      }
+      if (ev.key === 'Escape') {
+        committed = true;
+        span.textContent = input.getAttribute('data-original');
+      }
+    });
+  }
+});

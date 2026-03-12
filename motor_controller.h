@@ -164,6 +164,11 @@ public:
     std::atomic<bool> singleMotorMode = false;
     std::atomic<int> needs_unwind = 0;
 
+    // Safe mode — blocks external sources (rotctl, serial, stellarium) but not web UI
+    std::atomic<bool> safeMode{false};
+    bool isSafeMode() const { return safeMode.load(); }
+    void setSafeMode(bool enabled);
+
     // Wind stow state
     std::atomic<bool> _windStowActive = false;
 
