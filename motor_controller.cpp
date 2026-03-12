@@ -43,7 +43,7 @@ MotorSensorController::MotorSensorController(Preferences& prefs, INA219Manager& 
 void MotorSensorController::begin() {
     // Load configuration parameters from preferences
     P_el = _preferences.getInt("P_el", 100);
-    P_az = _preferences.getInt("P_az", 10);
+    P_az = _preferences.getInt("P_az", 50);
     MIN_EL_SPEED = _preferences.getInt("MIN_EL_SPEED", 50);
     MIN_AZ_SPEED = _preferences.getInt("MIN_AZ_SPEED", 100);
     _MIN_AZ_TOLERANCE = _preferences.getFloat("MIN_AZ_TOL", 0.1);
@@ -53,9 +53,9 @@ void MotorSensorController::begin() {
     _maxPowerFaultTotal = _preferences.getInt("MAX_PWR_TOT", 10);
     _minVoltageThreshold = _preferences.getInt("MIN_VOLTAGE", 6);
     I_el = _preferences.getFloat("I_el", 0.0f);
-    I_az = _preferences.getFloat("I_az", 0.0f);
+    I_az = _preferences.getFloat("I_az", 2.0f);
     D_el = _preferences.getFloat("D_el", 0.0f);
-    D_az = _preferences.getFloat("D_az", 25.0f);
+    D_az = _preferences.getFloat("D_az", 35.0f);
     _az_offset = _preferences.getFloat("az_offset", 0.0);
     _el_offset = _preferences.getFloat("el_offset", 0.0);
     _directionLockEnabled = _preferences.getBool("dirLock", true);
