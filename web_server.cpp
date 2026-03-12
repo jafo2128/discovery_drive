@@ -106,23 +106,10 @@ void WebServerManager::setupMainPageRoutes() {
             }
         }
 
-        String html = loadIndexHTML();
-        if (html == "") {
-            server->send(500, "text/plain", "Failed to load HTML template");
-            return;
-        }
-
-        // Replace template variables
-        html.replace("%var_calmode_checked%", msc.calMode ? "checked" : "");
-        html.replace("%var_singleMotorMode_checked%", msc.singleMotorMode ? "checked" : "");
-        
-        bool stellariumOn = preferences.getBool("stellariumOn", false);
-        html.replace("%var_stellariumOn_checked%", stellariumOn ? "checked" : "");
-        html.replace("%var_extendedEl_checked%", msc.isExtendedElEnabled() ? "checked" : "");
-        html.replace("%var_autoHome_checked%", msc.isAutoHomeEnabled() ? "checked" : "");
-        html.replace("%var_smoothTracking_checked%", msc.isSmoothTrackingEnabled() ? "checked" : "");
-
-        server->send(200, "text/html", html);
+        // Stream HTML directly from LittleFS — avoids allocating a ~40KB String
+        // which can fail on fragmented heap and truncate the page.
+        // Checkbox states are synced by JavaScript via /config and /status endpoints.
+        handleStaticFile("/index.html", "text/html");
     });
 
     // OTA Update routes
@@ -1444,6 +1431,8 @@ void WebServerManager::handleStaticFile(const String& filePath, const String& co
             server->send(404, "text/plain", "File not found: " + filePath);
         }
         xSemaphoreGive(_fileMutex);
+    } else {
+        server->send(503, "text/plain", "Server busy");
     }
 }
 

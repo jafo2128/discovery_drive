@@ -381,7 +381,7 @@
     <label>Activate Calibration Mode:</label>
     <p>
       <label class="switch">
-        <input type="checkbox" id="toggleCal" onchange="toggleCal()" %var_calmode_checked%>
+        <input type="checkbox" id="toggleCal" onchange="toggleCal()">
         <span class="slider"></span>
       </label>
     </p>
@@ -498,7 +498,7 @@
     <label>Single Motor Mode:</label>
     <p>
       <label class="switch">
-        <input type="checkbox" id="singleMotorMode" onchange="setSingleMotorMode()" %var_singleMotorMode_checked%>
+        <input type="checkbox" id="singleMotorMode" onchange="setSingleMotorMode()">
         <span class="slider"></span>
       </label>
     </p>
@@ -507,7 +507,7 @@
     <p><strong>WARNING:</strong> Setting a negative elevation could jam your rotator if a dish or other large antenna is attached. Make sure that your attached antenna or device will not impact the rotator body during negative elevation.</p>
     <p>
       <label class="switch">
-        <input type="checkbox" id="extendedElToggle" onchange="toggleExtendedEl()" %var_extendedEl_checked%>
+        <input type="checkbox" id="extendedElToggle" onchange="toggleExtendedEl()">
         <span class="slider"></span>
       </label>
     </p>
@@ -516,7 +516,7 @@
     <p>Automatically returns the dish to its home position after no setpoints have been received for the configured timeout. If wind-based home is enabled, it will home to the wind-safe position instead of (0, 0).</p>
     <p>
       <label class="switch">
-        <input type="checkbox" id="autoHomeToggle" onchange="toggleAutoHome()" %var_autoHome_checked%>
+        <input type="checkbox" id="autoHomeToggle" onchange="toggleAutoHome()">
         <span class="slider"></span>
       </label>
     </p>
@@ -549,7 +549,7 @@
     <p><strong>NOTE:</strong> Smooth tracking uses a Kalman filter to interpolate setpoints between updates, reducing jerky movement. Reduces output torque (MIN_SMOOTH speeds) — only usable for low-torque situations (e.g. cameras). During wind stow, full torque is automatically restored.</p>
     <p>
       <label class="switch">
-        <input type="checkbox" id="smoothTrackingToggle" onchange="toggleSmoothTracking()" %var_smoothTracking_checked%>
+        <input type="checkbox" id="smoothTrackingToggle" onchange="toggleSmoothTracking()">
         <span class="slider"></span>
       </label>
     </p>
@@ -604,7 +604,7 @@
     <label>Stellarium Polling:</label>
     <p>
       <label class="switch">
-        <input type="checkbox" id="stellariumOn" onchange="stellariumOn()" %var_stellariumOn_checked%>
+        <input type="checkbox" id="stellariumOn" onchange="stellariumOn()">
         <span class="slider"></span>
       </label>
     </p>

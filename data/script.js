@@ -44,12 +44,13 @@ document.addEventListener('submit', function(e) {
   xhr.send(params.join('&'));
 });
 
-// Fetch configuration data once on page load (and after settings changes)
+// Fetch configuration data on page load (and after settings changes)
+// Retries on failure since the ESP32 may be busy serving other page assets
 function fetchConfig() {
   xget("/config", function(x) {
-    if (x.status != 200) return;
+    if (x.status != 200) { setTimeout(fetchConfig, 2000); return; }
     var data;
-    try { data = JSON.parse(x.responseText); } catch(e) { return; }
+    try { data = JSON.parse(x.responseText); } catch(e) { setTimeout(fetchConfig, 2000); return; }
 
     s("http_port",data.http_port);
     s("rotctl_port",data.rotctl_port);
@@ -104,6 +105,7 @@ function fetchConfig() {
     sync("windBasedHomeToggle",data.windBasedHomeEnabled);
     sync("autoHomeToggle",data.autoHomeEnabled);
     sync("smoothTrackingToggle",data.smoothTrackingEnabled);
+    sync("stellariumOn",data.stellariumPollingOn);
   });
 }
 fetchConfig();
@@ -137,6 +139,8 @@ setInterval(function() {
       s("el_startAngle",data.el_startAngle);
       s("needs_unwind",data.needs_unwind);
       s("calMode",data.calMode);
+      sync("toggleCal",data.calMode);
+      sync("singleMotorMode",data.singleMotorModeText);
       s("i2cErrorFlag_az",data.i2cErrorFlag_az);
       s("i2cErrorFlag_el",data.i2cErrorFlag_el);
       s("badAngleFlag",data.badAngleFlag);
