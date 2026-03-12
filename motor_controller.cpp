@@ -1314,13 +1314,16 @@ void MotorSensorController::calcIfNeedsUnwind(float correctedAngle_az) {
 // =============================================================================
 
 float MotorSensorController::readFilteredAngle(int i2c_addr, AxisState& axis) {
+    // Do I2C read OUTSIDE the filter mutex — I2C bus has its own _i2cMutex protection.
+    // This prevents the control loop from holding _getAngleMutex for the entire I2C
+    // transaction (~50ms worst case), which was causing web handler timeouts on tare.
+    float rawAngle = ReadRawAngle(i2c_addr);
+
     if (_getAngleMutex == NULL || xSemaphoreTake(_getAngleMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
         _logger.error("Failed to take mutex in readFilteredAngle");
         badAngleFlag = true;
         return 0;
     }
-
-    float rawAngle = ReadRawAngle(i2c_addr);
 
     if (rawAngle == -999) {
         // I2C read failed — return previous filtered angle
@@ -1875,23 +1878,26 @@ void MotorSensorController::handleCalibrationMode() {
     int calState = 0;
     unsigned long calMoveStartTime = 0;
 
-    // Read all calibration state under mutex
+    // Read calibration state under mutex, and handle state 0→1 transition
+    // in the same acquisition to avoid a second mutex take per cycle
     if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         calRunTime = _calRunTime;
         calAxis = _calAxis;
         calState = _calState;
         calMoveStartTime = _calMoveStartTime;
+
+        // If state 0 with pending move, transition to state 1 immediately
+        if (calState == 0 && abs(calRunTime) > 0 && calAxis != "") {
+            _calMoveStartTime = millis();
+            _calState = 1;
+            calState = 1;
+            calMoveStartTime = _calMoveStartTime;
+        }
         xSemaphoreGive(_calMutex);
     }
 
     if (calState == 0) {
-        if (abs(calRunTime) > 0 && calAxis != "") {
-            if (_calMutex != NULL && xSemaphoreTake(_calMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                _calMoveStartTime = millis();
-                _calState = 1;
-                xSemaphoreGive(_calMutex);
-            }
-        } else {
+        if (abs(calRunTime) == 0 || calAxis == "") {
             analogWrite(_pwm_pin_az, 255);
             analogWrite(_pwm_pin_el, 255);
             digitalWrite(_pwm_pin_az, 1);
