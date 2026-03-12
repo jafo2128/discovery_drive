@@ -1263,10 +1263,13 @@ void MotorSensorController::angle_shortest_error_az(float target_angle, float cu
 }
 
 void MotorSensorController::angle_error_el(float target_angle, float current_angle) {
-    // Normalize angles
+    // Normalize angles to 0-360 range (fmod preserves sign for negative inputs)
     target_angle = fmod(target_angle, 360);
+    if (target_angle < 0) target_angle += 360;
+
     current_angle = fmod(current_angle, 360);
-    
+    if (current_angle < 0) current_angle += 360;
+
     // Calculate shortest path error
     float error = target_angle - current_angle;
     if (error > 180) {
@@ -1773,6 +1776,15 @@ void MotorSensorController::setAzOffset(float offset) {
         xSemaphoreGive(_offsetMutex);
     }
 
+    // Reset direction lock — offset shifts the coordinate frame,
+    // invalidating the tracked movement direction
+    _az.dirLockDirection = 0;
+    _az.dirLockHasTracked = false;
+    _az.dirLockChangeCount = 0;
+
+    // Explicitly unlatch — previous latch position is no longer valid
+    _isAzMotorLatched = false;
+
     // NVS write outside mutex — can block during wear-leveling
     _preferences.putFloat("az_offset", offset);
     _logger.info("AZ angle offset set to: " + String(offset, 3) + "°");
@@ -1799,6 +1811,15 @@ void MotorSensorController::setElOffset(float offset) {
         _setPointElUpdated = true;
         xSemaphoreGive(_offsetMutex);
     }
+
+    // Reset direction lock — offset shifts the coordinate frame,
+    // invalidating the tracked movement direction
+    _el.dirLockDirection = 0;
+    _el.dirLockHasTracked = false;
+    _el.dirLockChangeCount = 0;
+
+    // Explicitly unlatch — previous latch position is no longer valid
+    _isElMotorLatched = false;
 
     // NVS write outside mutex — can block during wear-leveling
     _preferences.putFloat("el_offset", offset);
