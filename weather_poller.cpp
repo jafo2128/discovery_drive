@@ -214,7 +214,7 @@ bool WeatherPoller::processWeatherResponse(const String& payload) {
     bool success = false;
     {
         // Use appropriate document size - increased slightly for safety
-        DynamicJsonDocument doc(5120);  // 5KB should handle most responses
+        DynamicJsonDocument doc(8192);
         
         DeserializationError error = deserializeJson(doc, payload);
         
@@ -686,7 +686,12 @@ void WeatherPoller::clearWeatherData() {
 void WeatherPoller::setErrorState(const String& error) {
     if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         _weatherData.errorMessage = error;
-        _weatherData.dataValid = false;
+        // Keep previous data valid on transient failures so wind safety
+        // continues working with stale-but-usable data.
+        // Only invalidate if we never had a successful update.
+        if (_lastSuccessTime == 0) {
+            _weatherData.dataValid = false;
+        }
         xSemaphoreGive(_weatherDataMutex);
     }
     _logger.error("Weather polling error: " + error);
