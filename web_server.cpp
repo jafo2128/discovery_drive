@@ -667,6 +667,16 @@ void WebServerManager::setupConfigurationRoutes() {
         server->send(200, "text/plain", "Wind-based home positioning OFF");
     });
 
+    server->on("/showSunMoonOn", HTTP_GET, [this]() {
+        weatherPoller.setShowSunMoon(true);
+        server->send(200, "text/plain", "Sun/Moon compass display ON");
+    });
+
+    server->on("/showSunMoonOff", HTTP_GET, [this]() {
+        weatherPoller.setShowSunMoon(false);
+        server->send(200, "text/plain", "Sun/Moon compass display OFF");
+    });
+
     server->on("/setWindThresholds", HTTP_POST, [this]() {
         bool updated = false;
         
@@ -762,7 +772,7 @@ void WebServerManager::setupAPIRoutes() {
 
     // Real-time status endpoint - polled frequently, no NVS reads
     server->on("/status", HTTP_GET, [this]() {
-        static DynamicJsonDocument doc(8192);
+        static DynamicJsonDocument doc(10240);
         doc.clear();
 
         // Motor and control data — use native numeric types to avoid String heap allocations
@@ -837,16 +847,33 @@ void WebServerManager::setupAPIRoutes() {
             doc["currentWindDirection"] = r1(weatherData.currentWindDirection);
             doc["currentWindGust"] = r1(weatherData.currentWindGust);
             doc["currentWeatherTime"] = weatherData.currentTime;
+            doc["currentTempC"] = r1(weatherData.currentTempC);
+            doc["currentPrecipMm"] = r1(weatherData.currentPrecipMm);
+            doc["currentHumidity"] = weatherData.currentHumidity;
+            doc["currentConditionText"] = weatherData.currentConditionText;
+            doc["currentIsThunderstorm"] = weatherData.currentIsThunderstorm ? "YES" : "NO";
 
             JsonArray forecastWindSpeed = doc.createNestedArray("forecastWindSpeed");
             JsonArray forecastWindDirection = doc.createNestedArray("forecastWindDirection");
             JsonArray forecastWindGust = doc.createNestedArray("forecastWindGust");
             JsonArray forecastTimes = doc.createNestedArray("forecastTimes");
+            JsonArray forecastTempC = doc.createNestedArray("forecastTempC");
+            JsonArray forecastPrecipMm = doc.createNestedArray("forecastPrecipMm");
+            JsonArray forecastSnowCm = doc.createNestedArray("forecastSnowCm");
+            JsonArray forecastHumidity = doc.createNestedArray("forecastHumidity");
+            JsonArray forecastConditionText = doc.createNestedArray("forecastConditionText");
+            JsonArray forecastIsThunderstorm = doc.createNestedArray("forecastIsThunderstorm");
             for (int i = 0; i < 3; i++) {
                 forecastWindSpeed.add(r1(weatherData.forecastWindSpeed[i]));
                 forecastWindDirection.add(r1(weatherData.forecastWindDirection[i]));
                 forecastWindGust.add(r1(weatherData.forecastWindGust[i]));
                 forecastTimes.add(weatherData.forecastTimes[i]);
+                forecastTempC.add(r1(weatherData.forecastTempC[i]));
+                forecastPrecipMm.add(r1(weatherData.forecastPrecipMm[i]));
+                forecastSnowCm.add(r1(weatherData.forecastSnowCm[i]));
+                forecastHumidity.add(weatherData.forecastHumidity[i]);
+                forecastConditionText.add(weatherData.forecastConditionText[i]);
+                forecastIsThunderstorm.add(weatherData.forecastIsThunderstorm[i] ? "YES" : "NO");
             }
 
             doc["weatherLastUpdate"] = weatherData.lastUpdateTime;
@@ -948,6 +975,9 @@ void WebServerManager::setupAPIRoutes() {
         doc["weatherLocationConfigured"] = weatherPoller.isLocationConfigured() ? "YES" : "NO";
         doc["weatherLatitude"] = weatherPoller.getLatitude();
         doc["weatherLongitude"] = weatherPoller.getLongitude();
+
+        // Sun/Moon display
+        doc["showSunMoon"] = weatherPoller.isShowSunMoon() ? "ON" : "OFF";
 
         // Wind safety configuration
         doc["windSafetyEnabled"] = weatherPoller.isWindSafetyEnabled() ? "ON" : "OFF";

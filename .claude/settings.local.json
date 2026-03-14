@@ -6,7 +6,10 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(grep:*)",
       "Bash(cd C:\\\\GitHub_Projects\\\\discovery_drive:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.weatherapi.com)",
+      "WebFetch(domain:api.weatherapi.com)",
+      "WebFetch(domain:arduinojson.org)"
     ]
   }
 }

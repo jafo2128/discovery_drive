@@ -462,6 +462,7 @@ th {
 .copy-flash{opacity:1 !important}
 .danger-btn{background-color:#dc3545}
 .danger-btn:hover{background-color:#c82333}
+.storm-yes{color:#dc3545;font-weight:bold}
 
 /* Zebra stripe tables */
 table tr:nth-child(even):not(.section-divider) {

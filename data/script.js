@@ -85,6 +85,7 @@ function fetchConfig() {
     s("weatherLocationConfigured",data.weatherLocationConfigured);
     s("weatherLatitude",data.weatherLatitude);
     s("weatherLongitude",data.weatherLongitude);
+    s("showSunMoon",data.showSunMoon);
     s("windSafetyEnabled",data.windSafetyEnabled);
     s("windBasedHomeEnabled",data.windBasedHomeEnabled);
     s("windSpeedThreshold",data.windSpeedThreshold);
@@ -221,6 +222,15 @@ setInterval(function() {
       s("currentWindDirection",formatWindDirection(data.currentWindDirection));
       s("currentWindGust",data.currentWindGust);
       s("currentWeatherTime",formatWeatherTime(data.currentWeatherTime));
+      s("currentTempC",data.currentTempC != null ? data.currentTempC : "N/A");
+      s("currentPrecipMm",data.currentPrecipMm != null ? data.currentPrecipMm : "N/A");
+      s("currentHumidity",data.currentHumidity != null ? data.currentHumidity : "N/A");
+      s("currentConditionText",data.currentConditionText || "N/A");
+      var stormEl = document.getElementById("currentIsThunderstorm");
+      if (stormEl && !stormEl.querySelector('input,select')) {
+        stormEl.innerHTML = (data.currentIsThunderstorm === "YES") ? "YES" : "No";
+        stormEl.className = (data.currentIsThunderstorm === "YES") ? "storm-yes" : "";
+      }
 
       var hasForecastData = data.forecastWindSpeed &&
                             data.forecastWindDirection &&
@@ -238,6 +248,17 @@ setInterval(function() {
           s("forecastWindSpeed" + i,(speed !== null) ? speed : "N/A");
           s("forecastWindDirection" + i,formatWindDirection(direction));
           s("forecastWindGust" + i,(gust !== null) ? gust : "N/A");
+          s("forecastCondition" + i, data.forecastConditionText && data.forecastConditionText[i] ? data.forecastConditionText[i] : "N/A");
+          s("forecastTemp" + i, data.forecastTempC && data.forecastTempC[i] != null ? data.forecastTempC[i] : "N/A");
+          s("forecastPrecip" + i, data.forecastPrecipMm && data.forecastPrecipMm[i] != null ? data.forecastPrecipMm[i] : "N/A");
+          s("forecastSnow" + i, data.forecastSnowCm && data.forecastSnowCm[i] != null ? data.forecastSnowCm[i] : "N/A");
+          s("forecastHumidity" + i, data.forecastHumidity && data.forecastHumidity[i] != null ? data.forecastHumidity[i] : "N/A");
+          var fStormEl = document.getElementById("forecastStorm" + i);
+          if (fStormEl && !fStormEl.querySelector('input,select')) {
+            var isStorm = data.forecastIsThunderstorm && data.forecastIsThunderstorm[i] === "YES";
+            fStormEl.innerHTML = isStorm ? "YES" : "No";
+            fStormEl.className = isStorm ? "storm-yes" : "";
+          }
         }
       } else {
         for (var i = 0; i < 3; i++) {
@@ -245,6 +266,12 @@ setInterval(function() {
           s("forecastWindSpeed" + i,"N/A");
           s("forecastWindDirection" + i,"N/A");
           s("forecastWindGust" + i,"N/A");
+          s("forecastCondition" + i,"N/A");
+          s("forecastTemp" + i,"N/A");
+          s("forecastPrecip" + i,"N/A");
+          s("forecastSnow" + i,"N/A");
+          s("forecastHumidity" + i,"N/A");
+          s("forecastStorm" + i,"N/A");
         }
       }
 
@@ -257,7 +284,36 @@ setInterval(function() {
         weatherErrorDiv.style.display = "none";
       }
 
+      // Calculate sun/moon positions if enabled
+      var showSunMoonEl = document.getElementById("showSunMoon");
+      var showSunMoonOn = showSunMoonEl && showSunMoonEl.textContent.trim() === "ON";
+      var wLat = parseFloat(document.getElementById("weatherLatitude") ? document.getElementById("weatherLatitude").textContent.trim() : "0");
+      var wLon = parseFloat(document.getElementById("weatherLongitude") ? document.getElementById("weatherLongitude").textContent.trim() : "0");
+      var sunPos = null, moonPos = null;
+      if (showSunMoonOn && !isNaN(wLat) && !isNaN(wLon) && (wLat !== 0 || wLon !== 0)) {
+        var now = new Date();
+        sunPos = SunCalc.getPosition(now, wLat, wLon);
+        moonPos = SunCalc.getMoonPosition(now, wLat, wLon);
+        // Convert from suncalc (radians, az from south CW) to compass degrees (az from north CW)
+        var sunAzDeg = (sunPos.azimuth * 180 / Math.PI + 180) % 360;
+        var sunElDeg = sunPos.altitude * 180 / Math.PI;
+        var moonAzDeg = (moonPos.azimuth * 180 / Math.PI + 180) % 360;
+        var moonElDeg = moonPos.altitude * 180 / Math.PI;
+        s("sunAzimuth", sunAzDeg.toFixed(1) + "\u00B0");
+        s("sunElevation", sunElDeg.toFixed(1) + "\u00B0");
+        s("sunStatus", sunElDeg > 0 ? "Above Horizon" : "Below Horizon");
+        s("moonAzimuth", moonAzDeg.toFixed(1) + "\u00B0");
+        s("moonElevation", moonElDeg.toFixed(1) + "\u00B0");
+        s("moonStatus", moonElDeg > 0 ? "Above Horizon" : "Below Horizon");
+        sunPos = { az: sunAzDeg, el: sunElDeg };
+        moonPos = { az: moonAzDeg, el: moonElDeg };
+      } else {
+        s("sunAzimuth","N/A"); s("sunElevation","N/A"); s("sunStatus","N/A");
+        s("moonAzimuth","N/A"); s("moonElevation","N/A"); s("moonStatus","N/A");
+      }
+
       drawSkyplane();
+      drawSunMoon(sunPos, moonPos);
       drawPositions(azimuth, elevation, setpoint_az, setpoint_el, kalmanAz, kalmanEl);
       drawWindDirection(data.currentWindDirection, data.weatherDataValid === "YES");
     }
@@ -446,7 +502,121 @@ function drawWindDirection(windDirection, weatherDataValid) {
   ctx.stroke();
 }
 
+function drawSunMoon(sunPos, moonPos) {
+  if (!sunPos && !moonPos) return;
+  var toRadians = Math.PI / 180;
+  var adjustedAzimuth = -90 * toRadians;
+
+  function drawBody(pos, isSun) {
+    var el = pos.el;
+    var aboveHorizon = (el > 0);
+    // Clamp elevation: show objects down to -5 degrees at edge
+    if (el < -5) return;
+    var elClamped = Math.max(el, 0);
+    var elFrac = 1 - (elClamped / 90);
+    var azRad = pos.az * toRadians + adjustedAzimuth;
+    var x = centerX + (radius * elFrac) * Math.cos(azRad);
+    var y = centerY + (radius * elFrac) * Math.sin(azRad);
+    // Clamp to circle
+    var dist = Math.hypot(x - centerX, y - centerY);
+    if (dist > radius) {
+      var scale = radius / dist;
+      x = centerX + (x - centerX) * scale;
+      y = centerY + (y - centerY) * scale;
+    }
+    ctx.beginPath();
+    if (isSun) {
+      var r = 6;
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = aboveHorizon ? '#FFD700' : '#B8860B';
+      ctx.fill();
+      ctx.strokeStyle = aboveHorizon ? '#FFA500' : '#8B6914';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (aboveHorizon) {
+        for (var i = 0; i < 8; i++) {
+          var angle = i * Math.PI / 4;
+          ctx.beginPath();
+          ctx.moveTo(x + (r + 2) * Math.cos(angle), y + (r + 2) * Math.sin(angle));
+          ctx.lineTo(x + (r + 5) * Math.cos(angle), y + (r + 5) * Math.sin(angle));
+          ctx.strokeStyle = '#FFD700';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
+    } else {
+      var r = 5;
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = aboveHorizon ? '#C0C0C0' : '#808080';
+      ctx.fill();
+      ctx.strokeStyle = aboveHorizon ? '#A0A0A0' : '#606060';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  if (sunPos) drawBody(sunPos, true);
+  if (moonPos) drawBody(moonPos, false);
+}
+
 drawSkyplane();
+
+// ============================================================================
+// SunCalc - sun/moon position calculator (MIT License, mourner/suncalc)
+// ============================================================================
+var SunCalc = (function() {
+  var PI = Math.PI, sin = Math.sin, cos = Math.cos, tan = Math.tan,
+      asin = Math.asin, atan2 = Math.atan2,
+      rad = PI / 180, dayMs = 86400000, J1970 = 2440588, J2000 = 2451545,
+      e = rad * 23.4397; // obliquity of Earth
+
+  function toJulian(date) { return date.valueOf() / dayMs - 0.5 + J1970; }
+  function toDays(date) { return toJulian(date) - J2000; }
+
+  function rightAscension(l, b) { return atan2(sin(l) * cos(e) - tan(b) * sin(e), cos(l)); }
+  function declination(l, b) { return asin(sin(b) * cos(e) + cos(b) * sin(e) * sin(l)); }
+  function azimuthCalc(H, phi, dec) { return atan2(sin(H), cos(H) * sin(phi) - tan(dec) * cos(phi)); }
+  function altitudeCalc(H, phi, dec) { return asin(sin(phi) * sin(dec) + cos(phi) * cos(dec) * cos(H)); }
+  function siderealTime(d, lw) { return rad * (280.16 + 360.9856235 * d) - lw; }
+
+  function solarMeanAnomaly(d) { return rad * (357.5291 + 0.98560028 * d); }
+  function eclipticLongitude(M) {
+    var C = rad * (1.9148 * sin(M) + 0.02 * sin(2 * M) + 0.0003 * sin(3 * M)),
+        P = rad * 102.9372;
+    return M + C + P + PI;
+  }
+  function sunCoords(d) {
+    var M = solarMeanAnomaly(d), L = eclipticLongitude(M);
+    return { dec: declination(L, 0), ra: rightAscension(L, 0) };
+  }
+
+  function getPosition(date, lat, lng) {
+    var lw = rad * -lng, phi = rad * lat, d = toDays(date),
+        c = sunCoords(d), H = siderealTime(d, lw) - c.ra;
+    return { azimuth: azimuthCalc(H, phi, c.dec), altitude: altitudeCalc(H, phi, c.dec) };
+  }
+
+  function moonCoords(d) {
+    var L = rad * (218.316 + 13.176396 * d),
+        M = rad * (134.963 + 13.064993 * d),
+        F = rad * (93.272 + 13.229350 * d),
+        l = L + rad * 6.289 * sin(M),
+        b = rad * 5.128 * sin(F),
+        dt = 385001 - 20905 * cos(M);
+    return { ra: rightAscension(l, b), dec: declination(l, b), dist: dt };
+  }
+
+  function getMoonPosition(date, lat, lng) {
+    var lw = rad * -lng, phi = rad * lat, d = toDays(date),
+        c = moonCoords(d), H = siderealTime(d, lw) - c.ra,
+        h = altitudeCalc(H, phi, c.dec);
+    // Parallax correction
+    h = h + asin(6371 / c.dist) * cos(h);
+    return { azimuth: azimuthCalc(H, phi, c.dec), altitude: h };
+  }
+
+  return { getPosition: getPosition, getMoonPosition: getMoonPosition };
+})();
 
 function calEl(){xget("/calEl")}
 function moveEl(v){xget("/moveEl?value="+v)}

@@ -22,6 +22,7 @@
 // System includes
 #include <Preferences.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <atomic>
 
@@ -30,16 +31,33 @@
 
 struct WeatherData {
     float currentWindSpeed = 0.0;       // km/h
-    float currentWindGust = 0.0;        // km/h 
+    float currentWindGust = 0.0;        // km/h
     float currentWindDirection = 0.0;   // degrees
     String currentTime = "";
-    
+
+    // Current conditions (non-wind)
+    float currentTempC = 0.0;
+    float currentPrecipMm = 0.0;
+    int currentHumidity = 0;
+    int currentConditionCode = 0;
+    String currentConditionText = "";
+    bool currentIsThunderstorm = false;
+
     // 3-hour forecast arrays
     float forecastWindSpeed[3] = {0.0, 0.0, 0.0};
     float forecastWindGust[3] = {0.0, 0.0, 0.0};
     float forecastWindDirection[3] = {0.0, 0.0, 0.0};
     String forecastTimes[3] = {"", "", ""};
-    
+
+    // Forecast conditions (non-wind)
+    float forecastTempC[3] = {0.0, 0.0, 0.0};
+    float forecastPrecipMm[3] = {0.0, 0.0, 0.0};
+    float forecastSnowCm[3] = {0.0, 0.0, 0.0};
+    int forecastHumidity[3] = {0, 0, 0};
+    int forecastConditionCode[3] = {0, 0, 0};
+    String forecastConditionText[3] = {"", "", ""};
+    bool forecastIsThunderstorm[3] = {false, false, false};
+
     bool dataValid = false;
     String lastUpdateTime = "";
     String errorMessage = "";
@@ -82,6 +100,10 @@ public:
     bool isPollingEnabled();
     void setPollingEnabled(bool enabled);
 
+    // Sun/Moon display toggle
+    void setShowSunMoon(bool enabled);
+    bool isShowSunMoon();
+
     // Wind safety methods
     void setWindSafetyEnabled(bool enabled);
     bool isWindSafetyEnabled();
@@ -108,6 +130,9 @@ private:
     std::atomic<bool> _pollingEnabled{false};
     String _apiKey = "";
     
+    // Sun/Moon display
+    std::atomic<bool> _showSunMoon{true};
+
     // Wind safety configuration
     std::atomic<bool> _windSafetyEnabled{false};
     std::atomic<float> _windSpeedThreshold{50.0};    // km/h
@@ -133,9 +158,6 @@ private:
     WeatherData _weatherData;
     WindSafetyData _windSafetyData;
 
-    // Pre-allocated buffer for HTTP response to avoid heap fragmentation
-    String _responseBuffer;
-    
     // Core functionality helpers
     bool shouldPollWeather();
     bool pollWeatherData();
@@ -153,6 +175,9 @@ private:
     bool checkForecastWindConditions();
     void setEmergencyStowState(bool active, const String& reason);
     
+    // Weather condition helpers
+    bool isThunderstormCode(int code);
+
     // Utility methods
     float validateWindSpeed(float speed);
     float validateWindDirection(float direction);

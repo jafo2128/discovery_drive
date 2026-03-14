@@ -523,6 +523,11 @@
         <td>Set HOME position based on current wind direction</td>
       </tr>
       <tr>
+        <td>Sun/Moon Compass Display</td>
+        <td><span id="showSunMoon" class="editable" data-type="toggle" data-on-url="/showSunMoonOn" data-off-url="/showSunMoonOff">Loading...</span></td>
+        <td>Show sun and moon positions on the compass</td>
+      </tr>
+      <tr>
         <td>Wind Speed Threshold</td>
         <td><span id="windSpeedThreshold" class="editable" data-param="windSpeedThreshold" data-endpoint="/setWindThresholds" data-input-type="number" data-min="10" data-max="200">Loading...</span> km/h</td>
         <td>Max sustained wind speed before emergency stow</td>
@@ -601,12 +606,32 @@
 
     <button type="button" onclick="forceWeatherUpdate()">Force Update</button>
 
-    <h3>Current Wind Conditions</h3>
+    <h3>Current Weather Conditions</h3>
     <table>
       <tr>
         <th>Measurement</th>
         <th>Value</th>
         <th>Unit</th>
+      </tr>
+      <tr>
+        <td>Condition</td>
+        <td><span id="currentConditionText">N/A</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td>Temperature</td>
+        <td><span id="currentTempC">N/A</span></td>
+        <td>&deg;C</td>
+      </tr>
+      <tr>
+        <td>Humidity</td>
+        <td><span id="currentHumidity">N/A</span></td>
+        <td>%</td>
+      </tr>
+      <tr>
+        <td>Precipitation</td>
+        <td><span id="currentPrecipMm">N/A</span></td>
+        <td>mm</td>
       </tr>
       <tr>
         <td>Wind Speed</td>
@@ -624,41 +649,92 @@
         <td>km/h</td>
       </tr>
       <tr>
+        <td>Lightning/Storm</td>
+        <td><span id="currentIsThunderstorm">N/A</span></td>
+        <td></td>
+      </tr>
+      <tr>
         <td>Observation Time</td>
         <td><span id="currentWeatherTime">N/A</span></td>
         <td>Local</td>
       </tr>
     </table>
 
-    <h3>Wind Forecast (Next 3 Hours)</h3>
+    <h3>Weather Forecast (Next 3 Hours)</h3>
     <table>
       <tr>
         <th>Hour</th>
-        <th>Time (Local)</th>
-        <th>Wind Speed (km/h)</th>
-        <th>Direction (°)</th>
-        <th>Gusts (km/h)</th>
+        <th>Time</th>
+        <th>Condition</th>
+        <th>Temp (&deg;C)</th>
+        <th>Wind (km/h)</th>
+        <th>Dir (&deg;)</th>
+        <th>Gust (km/h)</th>
+        <th>Precip (mm)</th>
+        <th>Snow (cm)</th>
+        <th>Humidity (%)</th>
+        <th>Storm</th>
       </tr>
       <tr>
         <td>+1</td>
         <td><span id="forecastTime0">N/A</span></td>
+        <td><span id="forecastCondition0">N/A</span></td>
+        <td><span id="forecastTemp0">N/A</span></td>
         <td><span id="forecastWindSpeed0">N/A</span></td>
         <td><span id="forecastWindDirection0">N/A</span></td>
         <td><span id="forecastWindGust0">N/A</span></td>
+        <td><span id="forecastPrecip0">N/A</span></td>
+        <td><span id="forecastSnow0">N/A</span></td>
+        <td><span id="forecastHumidity0">N/A</span></td>
+        <td><span id="forecastStorm0">N/A</span></td>
       </tr>
       <tr>
         <td>+2</td>
         <td><span id="forecastTime1">N/A</span></td>
+        <td><span id="forecastCondition1">N/A</span></td>
+        <td><span id="forecastTemp1">N/A</span></td>
         <td><span id="forecastWindSpeed1">N/A</span></td>
         <td><span id="forecastWindDirection1">N/A</span></td>
         <td><span id="forecastWindGust1">N/A</span></td>
+        <td><span id="forecastPrecip1">N/A</span></td>
+        <td><span id="forecastSnow1">N/A</span></td>
+        <td><span id="forecastHumidity1">N/A</span></td>
+        <td><span id="forecastStorm1">N/A</span></td>
       </tr>
       <tr>
         <td>+3</td>
         <td><span id="forecastTime2">N/A</span></td>
+        <td><span id="forecastCondition2">N/A</span></td>
+        <td><span id="forecastTemp2">N/A</span></td>
         <td><span id="forecastWindSpeed2">N/A</span></td>
         <td><span id="forecastWindDirection2">N/A</span></td>
         <td><span id="forecastWindGust2">N/A</span></td>
+        <td><span id="forecastPrecip2">N/A</span></td>
+        <td><span id="forecastSnow2">N/A</span></td>
+        <td><span id="forecastHumidity2">N/A</span></td>
+        <td><span id="forecastStorm2">N/A</span></td>
+      </tr>
+    </table>
+
+    <h3>Sun & Moon Position</h3>
+    <table>
+      <tr>
+        <th>Body</th>
+        <th>Azimuth</th>
+        <th>Elevation</th>
+        <th>Status</th>
+      </tr>
+      <tr>
+        <td>Sun</td>
+        <td><span id="sunAzimuth">N/A</span></td>
+        <td><span id="sunElevation">N/A</span></td>
+        <td><span id="sunStatus">N/A</span></td>
+      </tr>
+      <tr>
+        <td>Moon</td>
+        <td><span id="moonAzimuth">N/A</span></td>
+        <td><span id="moonElevation">N/A</span></td>
+        <td><span id="moonStatus">N/A</span></td>
       </tr>
     </table>
 

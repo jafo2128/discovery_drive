@@ -32,15 +32,15 @@ void WeatherPoller::begin() {
     _apiKeyMutex = xSemaphoreCreateMutex();
     _windSafetyMutex = xSemaphoreCreateMutex();
 
-    // Pre-allocate HTTP response buffer to avoid heap fragmentation
-    _responseBuffer.reserve(12288);
-    
     // Load saved configuration
     _latitude = _preferences.getFloat("weather_lat", 0.0);
     _longitude = _preferences.getFloat("weather_lon", 0.0);
     _pollingEnabled = _preferences.getBool("weather_enabled", false);
     _apiKey = _preferences.getString("weather_api_key", "");
     
+    // Load sun/moon display preference
+    _showSunMoon = _preferences.getBool("showSunMoon", true);
+
     // Load wind safety configuration
     _windSafetyEnabled = _preferences.getBool("wind_safety_en", false);
     _windSpeedThreshold = _preferences.getFloat("wind_speed_thr", 50.0);
@@ -109,9 +109,9 @@ void WeatherPoller::runWeatherLoop(bool wifiConnected) {
     if (pollWeatherData()) {
         _lastSuccessTime = millis();
         updateWindSafetyStatus(); // Update wind safety after successful poll
-        _logger.info("Weather data updated successfully");
+        _logger.info("Weather data updated successfully (free heap: " + String(ESP.getFreeHeap()) + ")");
     } else {
-        _logger.warn("Failed to update weather data");
+        _logger.warn("Failed to update weather data (free heap: " + String(ESP.getFreeHeap()) + ")");
     }
     
     _forceUpdate = false;
@@ -159,87 +159,91 @@ bool WeatherPoller::pollWeatherData() {
     
     _logger.debug("Polling weather API: " + apiUrl);
     
-    // Use explicit scoping to ensure HTTPClient is properly destroyed
+    // Fetch response as string, then free TLS before parsing.
+    // This sequences memory: peak = max(TLS+string, doc) ≈ 20KB
+    // instead of TLS+doc concurrent ≈ 32KB with streaming.
     bool success = false;
+    String response;
+    int httpResponseCode;
     {
         HTTPClient http;
-        
         if (!http.begin(apiUrl)) {
             setErrorState("HTTP begin failed");
             return false;
-        }
-        
-        // Configure HTTP client with explicit connection management
-        http.setReuse(true);  // Disable connection reuse to prevent stale connections
+        } 
+
         http.setConnectTimeout(HTTP_TIMEOUT_MS);
         http.setTimeout(HTTP_TIMEOUT_MS);
-        http.addHeader("User-Agent", "DiscoveryDish/1.0");
-        http.addHeader("Connection", "close");  // Force connection close
-        
-        int httpResponseCode = http.GET();
-        
+
+        httpResponseCode = http.GET();
+
         if (httpResponseCode == 200) {
-            // Filter: only deserialize the fields we actually use,
-            // drastically reducing document memory for the 2-day forecast
-            StaticJsonDocument<256> filter;
-            filter["error"]["message"] = true;
-            filter["current"]["wind_kph"] = true;
-            filter["current"]["wind_degree"] = true;
-            filter["current"]["gust_kph"] = true;
-            filter["current"]["last_updated"] = true;
-            JsonObject forecastHourFilter = filter["forecast"]["forecastday"][0]["hour"][0].to<JsonObject>();
-            forecastHourFilter["time"] = true;
-            forecastHourFilter["wind_kph"] = true;
-            forecastHourFilter["wind_degree"] = true;
-            forecastHourFilter["gust_kph"] = true;
-
-            // Use pre-allocated buffer to avoid heap fragmentation
-            _responseBuffer = http.getString();
-
-            DynamicJsonDocument doc(4096);
-            DeserializationError error = deserializeJson(doc, _responseBuffer,
-                                                         DeserializationOption::Filter(filter));
-
-            if (error) {
-                String errorMsg = "JSON parse error: " + String(error.c_str());
-                setErrorState(errorMsg);
-            } else if (doc.containsKey("error")) {
-                String apiError = doc["error"]["message"].as<String>();
-                setErrorState("API error: " + apiError);
-            } else {
-                bool currentOk = extractCurrentWeather(doc);
-                bool forecastOk = extractForecastWeather(doc);
-
-                if (currentOk || forecastOk) {
-                    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        _weatherData.dataValid = true;
-                        _weatherData.errorMessage = "";
-                        xSemaphoreGive(_weatherDataMutex);
-                    }
-                    success = true;
-                } else {
-                    setErrorState("Failed to extract weather data");
-                }
-            }
-            doc.clear();
-        } else if (httpResponseCode == 401) {
-            setErrorState("Invalid API key");
-            _logger.error("WeatherAPI authentication failed - check API key");
-        } else if (httpResponseCode == 403) {
-            setErrorState("API key quota exceeded");
-            _logger.error("WeatherAPI quota exceeded");
-        } else if (httpResponseCode > 0) {
-            setErrorState("HTTP error: " + String(httpResponseCode));
-            _logger.error("WeatherAPI HTTP error: " + String(httpResponseCode));
-        } else {
-            setErrorState("Network error: " + String(httpResponseCode));
-            _logger.error("WeatherAPI network error: " + String(httpResponseCode));
+            response = http.getString();
         }
-        
-        // Explicitly end the HTTP connection
-        http.end();
-        
-    } // HTTPClient object destroyed here - forces cleanup
+
+        http.end();  // Frees TLS buffers before JSON parsing
+    }
+
+    if (httpResponseCode == 200) {
+        if (response.length() == 0) {
+            setErrorState("Empty response from API");
+            return false;
+        }
+
+        // Filter: only deserialize the fields we actually use
+        StaticJsonDocument<384> filter;
+        filter["error"]["message"] = true;
+        filter["current"] = true;
+        JsonObject forecastHourFilter = filter["forecast"]["forecastday"][0]["hour"][0].to<JsonObject>();
+        forecastHourFilter["time"] = true;
+        forecastHourFilter["wind_kph"] = true;
+        forecastHourFilter["wind_degree"] = true;
+        forecastHourFilter["gust_kph"] = true;
+        forecastHourFilter["temp_c"] = true;
+        forecastHourFilter["precip_mm"] = true;
+        forecastHourFilter["snow_cm"] = true;
+        forecastHourFilter["humidity"] = true;
+        forecastHourFilter["condition"]["text"] = true;
+        forecastHourFilter["condition"]["code"] = true;
+
+        DynamicJsonDocument doc(12288);
+        DeserializationError error = deserializeJson(doc, response,
+                                                     DeserializationOption::Filter(filter));
+        response = "";  // Free response string before processing
+
+        if (error) {
+            setErrorState("JSON parse error: " + String(error.c_str()));
+        } else if (doc.containsKey("error")) {
+            String apiError = doc["error"]["message"].as<String>();
+            setErrorState("API error: " + apiError);
+        } else {
+            bool currentOk = extractCurrentWeather(doc);
+            bool forecastOk = extractForecastWeather(doc);
+
+            if (currentOk || forecastOk) {
+                if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    _weatherData.dataValid = true;
+                    _weatherData.errorMessage = "";
+                    xSemaphoreGive(_weatherDataMutex);
+                }
+                success = true;
+            } else {
+                setErrorState("Failed to extract weather data");
+            }
+        }
+    } else if (httpResponseCode == 401) {
+        setErrorState("Invalid API key");
+        _logger.error("WeatherAPI authentication failed - check API key");
+    } else if (httpResponseCode == 403) {
+        setErrorState("API key quota exceeded");
+        _logger.error("WeatherAPI quota exceeded");
+    } else if (httpResponseCode > 0) {
+        setErrorState("HTTP error: " + String(httpResponseCode));
+        _logger.error("WeatherAPI HTTP error: " + String(httpResponseCode));
+    } else {
+        setErrorState("Network error: " + String(httpResponseCode));
+        _logger.error("WeatherAPI network error: " + String(httpResponseCode));
+    }
     
     return success;
 }
@@ -457,7 +461,19 @@ bool WeatherPoller::extractCurrentWeather(JsonDocument& doc) {
         _weatherData.currentWindSpeed = validateWindSpeed(current["wind_kph"]);
         _weatherData.currentWindDirection = validateWindDirection(current["wind_degree"]);
         _weatherData.currentWindGust = validateWindSpeed(current["gust_kph"]);
-        
+
+        // Extract non-wind current conditions
+        // Use .as<T>() instead of | default — the | operator checks is<T>() first,
+        // which fails when JSON stores an integer but we expect float (e.g. temp_c: 22 vs 22.0)
+        _weatherData.currentTempC = current["temp_c"].as<float>();
+        _weatherData.currentPrecipMm = current["precip_mm"].as<float>();
+        _weatherData.currentHumidity = current["humidity"].as<int>();
+        int condCode = current["condition"]["code"].as<int>();
+        _weatherData.currentConditionCode = condCode;
+        const char* condText = current["condition"]["text"];
+        _weatherData.currentConditionText = (condText != nullptr) ? String(condText) : "";
+        _weatherData.currentIsThunderstorm = isThunderstormCode(condCode);
+
         // Handle time strings carefully to avoid memory leaks
         const char* timeStr = current["last_updated"];
         if (timeStr != nullptr) {
@@ -467,7 +483,7 @@ bool WeatherPoller::extractCurrentWeather(JsonDocument& doc) {
             _weatherData.currentTime = "Unknown";
             _weatherData.lastUpdateTime = "Unknown";
         }
-        
+
         xSemaphoreGive(_weatherDataMutex);
         
         _logger.debug("Current wind: " + String(_weatherData.currentWindSpeed, 1) + " km/h, " +
@@ -491,18 +507,6 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
         return false;
     }
     
-    JsonObject today = forecastDays[0];
-    if (!today.containsKey("hour")) {
-        _logger.warn("No hourly data in forecast");
-        return false;
-    }
-    
-    JsonArray hours = today["hour"];
-    if (hours.size() == 0) {
-        _logger.warn("Empty hourly forecast array");
-        return false;
-    }
-    
     // Get current time from the API response to find our position
     String currentTimeStr = "";
     if (doc.containsKey("current") && doc["current"].containsKey("last_updated")) {
@@ -511,96 +515,64 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
             currentTimeStr = String(timeStr);
         }
     }
-    
+
     // Local structure for parsing outside mutex
     struct ForecastEntry {
         String time;
         float windSpeed;
         float windDirection;
         float windGust;
+        float tempC;
+        float precipMm;
+        float snowCm;
+        int humidity;
+        int conditionCode;
+        String conditionText;
+        bool isThunderstorm;
     };
     ForecastEntry localForecast[3];
     int forecastCount = 0;
-    
-    int currentHour = getCurrentHourFromTime(currentTimeStr);
 
-    // If we couldn't parse current hour, or it's late in the day (hour >= 21),
-    // start with tomorrow's forecast to ensure we get enough future hours
-    bool startWithTomorrow = (currentHour < 0 || currentHour > 23 || currentHour >= 21);
-    
-    if (startWithTomorrow && forecastDays.size() > 1) {
-        _logger.debug("Late hour (" + String(currentHour) + ") or invalid time - prioritizing tomorrow's forecast");
-        
-        // Get tomorrow's hours first
-        JsonObject tomorrow = forecastDays[1];
-        if (tomorrow.containsKey("hour")) {
-            JsonArray tomorrowHours = tomorrow["hour"];
-            
-            for (size_t i = 0; i < tomorrowHours.size() && forecastCount < 3; i++) {
-                JsonObject hour = tomorrowHours[i];
-                
-                const char* hourTimeStr = hour["time"];
-                if (hourTimeStr == nullptr) continue;
-                
-                localForecast[forecastCount].time = String(hourTimeStr);
-                localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
-                localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
-                localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
-                
-                forecastCount++;
-            }
-        }
-    } else {
-        _logger.debug("Current hour: " + String(currentHour) + ", filtering for hours > " + String(currentHour));
-        
-        // Parse today's forecast hours - only include future hours
-        for (size_t i = 0; i < hours.size() && forecastCount < 3; i++) {
-            JsonObject hour = hours[i];
-            
+    int currentHour = getCurrentHourFromTime(currentTimeStr);
+    _logger.debug("Current hour: " + String(currentHour));
+
+    // Scan all forecast days (today + tomorrow) for the next 3 future hours
+    for (size_t d = 0; d < forecastDays.size() && forecastCount < 3; d++) {
+        JsonObject day = forecastDays[d];
+        if (!day.containsKey("hour")) continue;
+        JsonArray dayHours = day["hour"];
+
+        for (size_t i = 0; i < dayHours.size() && forecastCount < 3; i++) {
+            JsonObject hour = dayHours[i];
+
             const char* hourTimeStr = hour["time"];
             if (hourTimeStr == nullptr) continue;
-            
-            String hourTime = String(hourTimeStr);
-            int hourValue = getHourFromTimeString(hourTime);
-            
-            // Include hours after current hour
-            if (hourValue > currentHour) {
-                localForecast[forecastCount].time = hourTime;
-                localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
-                localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
-                localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
-                
-                _logger.debug("Forecast " + String(forecastCount) + ": " + hourTime + 
-                             " - Wind: " + String(localForecast[forecastCount].windSpeed, 1) + " km/h");
-                
-                forecastCount++;
+
+            // For today (d==0), skip past/current hours; for tomorrow, include all
+            if (d == 0) {
+                int hourValue = getHourFromTimeString(String(hourTimeStr));
+                if (hourValue <= currentHour) continue;
             }
-        }
-        
-        // If we still need more hours, get them from tomorrow
-        if (forecastCount < 3 && forecastDays.size() > 1) {
-            JsonObject tomorrow = forecastDays[1];
-            if (tomorrow.containsKey("hour")) {
-                JsonArray tomorrowHours = tomorrow["hour"];
-                
-                for (size_t i = 0; i < tomorrowHours.size() && forecastCount < 3; i++) {
-                    JsonObject hour = tomorrowHours[i];
-                    
-                    const char* hourTimeStr = hour["time"];
-                    if (hourTimeStr == nullptr) continue;
-                    
-                    localForecast[forecastCount].time = String(hourTimeStr);
-                    localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
-                    localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
-                    localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
-                    
-                    _logger.debug("Tomorrow forecast " + String(forecastCount) + ": " + 
-                                 localForecast[forecastCount].time + " - Wind: " + 
-                                 String(localForecast[forecastCount].windSpeed, 1) + " km/h");
-                    
-                    forecastCount++;
-                }
-            }
+
+            localForecast[forecastCount].time = String(hourTimeStr);
+            localForecast[forecastCount].windSpeed = validateWindSpeed(hour["wind_kph"]);
+            localForecast[forecastCount].windDirection = validateWindDirection(hour["wind_degree"]);
+            localForecast[forecastCount].windGust = validateWindSpeed(hour["gust_kph"]);
+            localForecast[forecastCount].tempC = hour["temp_c"].as<float>();
+            localForecast[forecastCount].precipMm = hour["precip_mm"].as<float>();
+            localForecast[forecastCount].snowCm = hour["snow_cm"].as<float>();
+            localForecast[forecastCount].humidity = hour["humidity"].as<int>();
+            int fc = hour["condition"]["code"].as<int>();
+            localForecast[forecastCount].conditionCode = fc;
+            const char* ft = hour["condition"]["text"];
+            localForecast[forecastCount].conditionText = (ft != nullptr) ? String(ft) : "";
+            localForecast[forecastCount].isThunderstorm = isThunderstormCode(fc);
+
+            _logger.debug("Forecast " + String(forecastCount) + ": " +
+                         localForecast[forecastCount].time + " - Wind: " +
+                         String(localForecast[forecastCount].windSpeed, 1) + " km/h");
+
+            forecastCount++;
         }
     }
     
@@ -617,11 +589,25 @@ bool WeatherPoller::extractForecastWeather(JsonDocument& doc) {
                 _weatherData.forecastWindSpeed[i] = localForecast[i].windSpeed;
                 _weatherData.forecastWindDirection[i] = localForecast[i].windDirection;
                 _weatherData.forecastWindGust[i] = localForecast[i].windGust;
+                _weatherData.forecastTempC[i] = localForecast[i].tempC;
+                _weatherData.forecastPrecipMm[i] = localForecast[i].precipMm;
+                _weatherData.forecastSnowCm[i] = localForecast[i].snowCm;
+                _weatherData.forecastHumidity[i] = localForecast[i].humidity;
+                _weatherData.forecastConditionCode[i] = localForecast[i].conditionCode;
+                _weatherData.forecastConditionText[i] = localForecast[i].conditionText;
+                _weatherData.forecastIsThunderstorm[i] = localForecast[i].isThunderstorm;
             } else {
                 _weatherData.forecastTimes[i] = "";
                 _weatherData.forecastWindSpeed[i] = 0.0f;
                 _weatherData.forecastWindDirection[i] = 0.0f;
                 _weatherData.forecastWindGust[i] = 0.0f;
+                _weatherData.forecastTempC[i] = 0.0f;
+                _weatherData.forecastPrecipMm[i] = 0.0f;
+                _weatherData.forecastSnowCm[i] = 0.0f;
+                _weatherData.forecastHumidity[i] = 0;
+                _weatherData.forecastConditionCode[i] = 0;
+                _weatherData.forecastConditionText[i] = "";
+                _weatherData.forecastIsThunderstorm[i] = false;
             }
         }
         xSemaphoreGive(_weatherDataMutex);
@@ -644,15 +630,30 @@ void WeatherPoller::clearWeatherData() {
         _weatherData.lastUpdateTime = "Never";
         _weatherData.errorMessage = "";
         _weatherData.dataValid = false;
-        
+
+        // Clear current non-wind fields
+        _weatherData.currentTempC = 0.0;
+        _weatherData.currentPrecipMm = 0.0;
+        _weatherData.currentHumidity = 0;
+        _weatherData.currentConditionCode = 0;
+        _weatherData.currentConditionText = "";
+        _weatherData.currentIsThunderstorm = false;
+
         // Clear forecast arrays
         for (int i = 0; i < 3; i++) {
             _weatherData.forecastWindSpeed[i] = 0.0;
             _weatherData.forecastWindGust[i] = 0.0;
             _weatherData.forecastWindDirection[i] = 0.0;
             _weatherData.forecastTimes[i] = "";
+            _weatherData.forecastTempC[i] = 0.0;
+            _weatherData.forecastPrecipMm[i] = 0.0;
+            _weatherData.forecastSnowCm[i] = 0.0;
+            _weatherData.forecastHumidity[i] = 0;
+            _weatherData.forecastConditionCode[i] = 0;
+            _weatherData.forecastConditionText[i] = "";
+            _weatherData.forecastIsThunderstorm[i] = false;
         }
-        
+
         xSemaphoreGive(_weatherDataMutex);
     }
 }
@@ -822,6 +823,29 @@ void WeatherPoller::setPollingEnabled(bool enabled) {
         clearWeatherData();
         setEmergencyStowState(false, "");
     }
+}
+
+// =============================================================================
+// SUN/MOON DISPLAY METHODS
+// =============================================================================
+
+void WeatherPoller::setShowSunMoon(bool enabled) {
+    _showSunMoon = enabled;
+    _preferences.putBool("showSunMoon", enabled);
+    _logger.info("Sun/Moon compass display " + String(enabled ? "enabled" : "disabled"));
+}
+
+bool WeatherPoller::isShowSunMoon() {
+    return _showSunMoon.load();
+}
+
+// =============================================================================
+// WEATHER CONDITION HELPERS
+// =============================================================================
+
+bool WeatherPoller::isThunderstormCode(int code) {
+    // WeatherAPI.com condition codes for thunderstorm-related weather
+    return (code == 1087 || code == 1273 || code == 1276 || code == 1279 || code == 1282);
 }
 
 // =============================================================================
