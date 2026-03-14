@@ -31,6 +31,9 @@ void WeatherPoller::begin() {
     _weatherDataMutex = xSemaphoreCreateMutex();
     _apiKeyMutex = xSemaphoreCreateMutex();
     _windSafetyMutex = xSemaphoreCreateMutex();
+
+    // Pre-allocate HTTP response buffer to avoid heap fragmentation
+    _responseBuffer.reserve(12288);
     
     // Load saved configuration
     _latitude = _preferences.getFloat("weather_lat", 0.0);
@@ -176,10 +179,49 @@ bool WeatherPoller::pollWeatherData() {
         int httpResponseCode = http.GET();
         
         if (httpResponseCode == 200) {
-            String payload = http.getString();
-            success = processWeatherResponse(payload);
-            // Clear payload immediately after use
-            payload = String();
+            // Filter: only deserialize the fields we actually use,
+            // drastically reducing document memory for the 2-day forecast
+            StaticJsonDocument<256> filter;
+            filter["error"]["message"] = true;
+            filter["current"]["wind_kph"] = true;
+            filter["current"]["wind_degree"] = true;
+            filter["current"]["gust_kph"] = true;
+            filter["current"]["last_updated"] = true;
+            JsonObject forecastHourFilter = filter["forecast"]["forecastday"][0]["hour"][0].to<JsonObject>();
+            forecastHourFilter["time"] = true;
+            forecastHourFilter["wind_kph"] = true;
+            forecastHourFilter["wind_degree"] = true;
+            forecastHourFilter["gust_kph"] = true;
+
+            // Use pre-allocated buffer to avoid heap fragmentation
+            _responseBuffer = http.getString();
+
+            DynamicJsonDocument doc(4096);
+            DeserializationError error = deserializeJson(doc, _responseBuffer,
+                                                         DeserializationOption::Filter(filter));
+
+            if (error) {
+                String errorMsg = "JSON parse error: " + String(error.c_str());
+                setErrorState(errorMsg);
+            } else if (doc.containsKey("error")) {
+                String apiError = doc["error"]["message"].as<String>();
+                setErrorState("API error: " + apiError);
+            } else {
+                bool currentOk = extractCurrentWeather(doc);
+                bool forecastOk = extractForecastWeather(doc);
+
+                if (currentOk || forecastOk) {
+                    if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                        _weatherData.dataValid = true;
+                        _weatherData.errorMessage = "";
+                        xSemaphoreGive(_weatherDataMutex);
+                    }
+                    success = true;
+                } else {
+                    setErrorState("Failed to extract weather data");
+                }
+            }
+            doc.clear();
         } else if (httpResponseCode == 401) {
             setErrorState("Invalid API key");
             _logger.error("WeatherAPI authentication failed - check API key");
@@ -199,77 +241,9 @@ bool WeatherPoller::pollWeatherData() {
         
     } // HTTPClient object destroyed here - forces cleanup
     
-    // Force string pool cleanup if memory is low
-    if (ESP.getFreeHeap() < 50000) {
-        // Force string cleanup by creating and destroying temporary strings
-        String temp = "";
-        temp.reserve(0);
-    }
-    
     return success;
 }
 
-bool WeatherPoller::processWeatherResponse(const String& payload) {
-    // Use explicit scoping for JSON document to ensure proper cleanup
-    bool success = false;
-    {
-        // Use appropriate document size - increased slightly for safety
-        DynamicJsonDocument doc(8192);
-        
-        DeserializationError error = deserializeJson(doc, payload);
-        
-        if (error) {
-            String errorMsg = "JSON parse error: " + String(error.c_str());
-            
-            // Add more detailed error information for debugging
-            if (error == DeserializationError::IncompleteInput) {
-                errorMsg += " (Response appears truncated - received " + 
-                           String(payload.length()) + " bytes)";
-            } else if (error == DeserializationError::NoMemory) {
-                errorMsg += " (Insufficient memory for JSON parsing - need ~" + 
-                           String(payload.length() * 1.5) + " bytes)";
-            }
-            
-            setErrorState(errorMsg);
-            
-            // Clear document before returning
-            doc.clear();
-            return false;
-        }
-        
-        // Check for API errors
-        if (doc.containsKey("error")) {
-            String apiError = doc["error"]["message"].as<String>();
-            setErrorState("API error: " + apiError);
-            
-            // Clear document before returning
-            doc.clear();
-            return false;
-        }
-        
-        // Extract current and forecast weather data
-        bool currentOk = extractCurrentWeather(doc);
-        bool forecastOk = extractForecastWeather(doc);
-        
-        if (currentOk || forecastOk) {
-            if (_weatherDataMutex != NULL && xSemaphoreTake(_weatherDataMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                _weatherData.dataValid = true;
-                _weatherData.errorMessage = "";
-                xSemaphoreGive(_weatherDataMutex);
-            }
-            success = true;
-        } else {
-            setErrorState("Failed to extract weather data");
-            success = false;
-        }
-        
-        // Explicitly clear the JSON document to free memory immediately
-        doc.clear();
-        
-    } // DynamicJsonDocument destroyed here
-    
-    return success;
-}
 
 // =============================================================================
 // WIND SAFETY METHODS

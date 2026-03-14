@@ -132,11 +132,13 @@ private:
     // Weather data storage
     WeatherData _weatherData;
     WindSafetyData _windSafetyData;
+
+    // Pre-allocated buffer for HTTP response to avoid heap fragmentation
+    String _responseBuffer;
     
     // Core functionality helpers
     bool shouldPollWeather();
     bool pollWeatherData();
-    bool processWeatherResponse(const String& payload);
     String buildApiUrl();
     
     // Data processing helpers
